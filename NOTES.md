@@ -53,3 +53,16 @@ Restore:
   device signed into YOUR Apple ID. Can't forge - it's Apple-key-signed.
 - Sync (link layer, done) is separate from transfer (auth, hard/maybe-blocked).
 - The SYNC result alone is novel and worth writing up regardless of transfer.
+
+## 2026-07-25: radio channel does not match requested channel
+- `iw dev wlp2s0 set channel 149` -> `iw info` reports 149, but every frame
+  captured arrives tagged 5180 MHz (= channel 36). Plain iw, not OWL's netlink
+  path, so this is below OWL entirely.
+- Explains 60s OWL run with 1618 outbound lines and ZERO received frames:
+  pcap filter is AWDL BSSID only, Mac advertises on 149, radio was on 36.
+- Monitor RX itself is fine (22 pkts, 0 dropped) on 6.12.97.
+- txpower read 3.00 dBm on 6.12.97 - FINDINGS §2 lists this as a 6.18 symptom.
+  Run did not force `txpower fixed 2000`. §2 claim needs qualifying or dropping.
+- UNRESOLVED: is the radio actually on 36, or is mt76 mislabelling the radiotap
+  frequency field? Sweep 36/44/149 and see whether reported freq tracks. That
+  test is written up in the chat log, run it first thing.
