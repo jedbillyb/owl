@@ -293,13 +293,30 @@ void awdl_switch_channel(struct ev_loop *loop, ev_timer *timer, int revents) {
 	chan_num_new = awdl_chan_num(awdl_state->channel.sequence[slot], awdl_state->channel.enc);
 
 	if (chan_num_new && (chan_num_new != chan_num_old)) {
+		int err = 0;
 		log_debug("switch channel to %d (slot %d)", chan_num_new, slot);
 		if (!state->io.wlan_is_file) {
-			bool is_available;
-			is_channel_available(state->io.wlan_ifindex, chan_num_new, &is_available);
-			set_channel(state->io.wlan_ifindex, chan_num_new);
+			/* NOTE: upstream called is_channel_available() here and then
+			 * discarded the result. That call issues a full split wiphy dump
+			 * over netlink and blocks the event loop -- harmless with a static
+			 * 16-slot sequence (this branch never re-enters), but once we
+			 * actually follow a peer's sequence it runs on every transition,
+			 * against a 16 TU (16384 us) availability window. It is dropped
+			 * here; a failed set_channel() is caught below anyway, which is
+			 * the outcome the check was nominally guarding against. */
+			uint64_t t0 = clock_time_us();
+			err = set_channel(state->io.wlan_ifindex, chan_num_new);
+			log_debug("set_channel(%d) took %llu us", chan_num_new,
+			          (unsigned long long) (clock_time_us() - t0));
 		}
-		awdl_state->channel.current = chan_new;
+		if (err < 0) {
+			/* Do NOT advance channel.current: the radio did not move, and
+			 * lying about it desyncs our idea of the channel from the card. */
+			log_warn("could not switch to channel %d (slot %d), radio still on %d",
+			         chan_num_new, slot, chan_num_old);
+		} else {
+			awdl_state->channel.current = chan_new;
+		}
 	}
 
 	next_aw = awdl_sync_next_aw_us(now, &awdl_state->sync);
@@ -317,6 +334,46 @@ static void awdl_neighbor_remove(struct awdl_peer *p, void *_io_state) {
 	neighbor_remove_rfc4291(io_state->host_ifindex, &p->addr);
 }
 
+/*
+ * Adopt the channel sequence of whichever peer won the election as our sync
+ * master, so that we are on-channel during its availability windows. Reverts
+ * to our own static sequence when we are our own sync master again (e.g. the
+ * master aged out of the peer table).
+ *
+ * The peer's sequence is stored as raw TLV bytes, so its encoding must be
+ * adopted along with it -- decoding those bytes with a different encoding
+ * yields plausible-looking but wrong channel numbers.
+ */
+static void awdl_adopt_sync_master_chanseq(struct daemon_state *state) {
+	struct awdl_state *awdl = &state->awdl_state;
+	struct awdl_peer *master;
+
+	if (awdl_election_is_sync_master(&awdl->election, &awdl->self_address)) {
+		if (awdl->channel.sequence_from_peer) {
+			log_info("no sync master, reverting to static channel sequence");
+			awdl_chanseq_init_static(awdl->channel.sequence, &awdl->channel.master);
+			awdl->channel.enc = AWDL_CHAN_ENC_OPCLASS;
+			awdl->channel.sequence_from_peer = 0;
+		}
+		return;
+	}
+
+	if (awdl_peer_get(awdl->peers.peers, &awdl->election.sync_addr, &master) < 0)
+		return; /* elected master is not in the peer table */
+
+	if (!master->has_sequence)
+		return; /* no chanseq TLV seen from it yet; keep what we have */
+
+	if (awdl->channel.enc != master->sequence_enc ||
+	    memcmp(awdl->channel.sequence, master->sequence, sizeof(master->sequence))) {
+		awdl->channel.enc = master->sequence_enc;
+		memcpy(awdl->channel.sequence, master->sequence, sizeof(master->sequence));
+		awdl->channel.sequence_from_peer = 1;
+		log_info("following channel sequence of sync master %s (%s), enc %d",
+		         ether_ntoa(&master->addr), master->name, master->sequence_enc);
+	}
+}
+
 void awdl_clean_peers(struct ev_loop *loop, ev_timer *timer, int revents) {
 	(void) loop;
 	(void) revents; /* should always be EV_TIMER */
@@ -331,6 +388,8 @@ void awdl_clean_peers(struct ev_loop *loop, ev_timer *timer, int revents) {
 
 	/* TODO for now run election immediately after clean up; might consider seperate timer for this */
 	awdl_election_run(&state->awdl_state.election, &state->awdl_state.peers);
+
+	awdl_adopt_sync_master_chanseq(state);
 
 	ev_timer_again(loop, timer);
 }

@@ -61,6 +61,9 @@ struct awdl_channel_state {
 	struct awdl_chan sequence[AWDL_CHANSEQ_LENGTH];
 	struct awdl_chan master;
 	struct awdl_chan current;
+	/* 0: 'sequence' is our own static sequence built from 'master'.
+	 * 1: 'sequence' was inherited from the elected sync master peer. */
+	uint8_t sequence_from_peer;
 };
 
 void awdl_chanseq_init(struct awdl_chan *seq);
