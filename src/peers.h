@@ -40,6 +40,10 @@ struct awdl_peer {
 	uint64_t last_update;
 	struct awdl_election_state election;
 	struct awdl_chan sequence[AWDL_CHANSEQ_LENGTH];
+	/* Encoding 'sequence' was received in. The raw TLV bytes are stored
+	 * verbatim, so they are only decodable with this encoding -- decoding
+	 * them with the local channel.enc silently yields wrong channels. */
+	enum awdl_chan_encoding sequence_enc;
 	uint64_t sync_offset;
 	char name[HOST_NAME_LENGTH_MAX + 1]; /* space for trailing zero */
 	char country_code[2 + 1];
@@ -49,6 +53,7 @@ struct awdl_peer {
 	uint8_t supports_v2 : 1;
 	uint8_t sent_mif : 1;
 	uint8_t is_valid : 1;
+	uint8_t has_sequence : 1; /* set once a chanseq TLV has been parsed */
 };
 
 typedef void (*awdl_peer_cb)(struct awdl_peer *, void *arg);

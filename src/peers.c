@@ -73,6 +73,8 @@ struct awdl_peer *awdl_peer_new(const struct ether_addr *addr) {
 	peer->last_update = 0;
 	awdl_election_state_init(&peer->election, addr);
 	awdl_chanseq_init_static(peer->sequence, &CHAN_NULL);
+	peer->sequence_enc = AWDL_CHAN_ENC_OPCLASS;
+	peer->has_sequence = 0;
 	peer->sync_offset = 0;
 	peer->devclass = 0;
 	peer->version = 0;

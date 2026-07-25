@@ -102,6 +102,8 @@ int awdl_handle_chanseq_tlv(struct awdl_peer *src, const struct buf *val,
 		          awdl_chan_num(list[14], encoding), awdl_chan_num(list[15], encoding));
 		memcpy(src->sequence, list, sizeof(list));
 	}
+	src->sequence_enc = encoding;
+	src->has_sequence = 1;
 	return RX_OK;
 
 wire_error:
