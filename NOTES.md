@@ -1,0 +1,55 @@
+# AWDL / OWL on MT7921 - project notes
+
+## Status: WORKS (with one open problem)
+Synced with a real Apple device. Peer discovery, channel-sequence parsing,
+and master election all confirmed on an MT7921 Filogic 330. Reproducible.
+
+## CRITICAL: kernel pin
+- Kernel 6.18 has a broken mt76 monitor-mode RX path. Card injects (TX) fine
+  but captures ZERO frames in monitor mode. TX power also stuck at 3 dBm.
+- Kernel 6.12.97 works. Monitor RX confirmed (beacons flood in).
+- GRUB pinned to 6.12.97 via saved_entry. DO NOT let it boot 6.18 or monitor
+  RX silently dies and everything looks broken again.
+- If it ever "randomly breaks after reboot": check `uname -r`. If 6.18, that's why.
+
+## Build
+- Repo: seemoo-lab/owl at ~/owl (copied off /mnt/shared - NTFS strips exec bit)
+- Builds clean on GCC 14, no source changes. Deps: libev, libnl3, libpcap.
+- Build: cmake -G Ninja -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -S . -B build
+         cmake --build build --target owl
+- Binary: ~/owl/build/daemon/owl
+
+## Run (kills internet on the card while running)
+    sudo sv down NetworkManager
+    sudo pkill -x wpa_supplicant; sudo pkill -x dhcpcd; sleep 1
+    sudo iw reg set NZ
+    sudo ip link set wlp2s0 down
+    sudo ./owl -i wlp2s0 -c 149 -v      # -c 44 or 149 for 5GHz (Mac lives there)
+Restore:
+    sudo ip link set wlp2s0 down; sudo iw dev wlp2s0 set type managed
+    sudo ip link set wlp2s0 up; sudo sv up NetworkManager
+
+## Discovery notes
+- Lone OWL node sits STATIC on its master channel (chanseq_init_static, all
+  16 slots = master chan). Default master = ch6 (2.4GHz).
+- Local environment is all 5GHz. Must run -c 44 or -c 149 to hear the Mac.
+- Mac's advertised sequence seen: 149,149,149,149,149,149,36,36,6,149,149,149,149,149,36,36
+
+## OPEN PROBLEM (next session)
+- Peer is discovered and added, then DROPPED after ~4 seconds.
+- Cause: OWL stays static on one channel while the Mac hops its full sequence
+  (149/36/6). OWL misses the availability windows on 36 and 6, can't maintain
+  the link, peer ages out.
+- FIX: make OWL adopt and FOLLOW the discovered peer's channel sequence instead
+  of sitting static. Lives in awdl_switch_channel() in daemon/core.c (~line 279).
+  The switch loop already reads channel.sequence[slot] - needs the sequence to
+  become the peer's, and the hop timing tight enough that the offload chip keeps
+  up. Whether mt7921 firmware latency allows tight-enough hopping is THE research
+  question.
+
+## Transfer reality check (further out)
+- iPhone on iOS 26.5 => AirDrop-code handshake for non-contacts. OpenDrop can't
+  do it. Contacts auth needs a real Apple ID Validation Record (VLD) from a
+  device signed into YOUR Apple ID. Can't forge - it's Apple-key-signed.
+- Sync (link layer, done) is separate from transfer (auth, hard/maybe-blocked).
+- The SYNC result alone is novel and worth writing up regardless of transfer.
