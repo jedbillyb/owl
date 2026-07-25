@@ -1,0 +1,5 @@
+22:33:52 DEBUG: peer 46:a1:9:1:1b:38 () changed channel sequence to 149,149,149,149,149,149,36,36,6,149,149,149,149,149,36,36
+22:33:52 INFO : add peer 46:a1:9:1:1b:38 ()
+22:33:52 DEBUG: new election tree: 4c:82:a9:17:65:27 -> 46:a1:9:1:1b:38 (met 515, ctr 319)
+22:33:56 INFO : remove peer 46:a1:9:1:1b:38 ()
+22:33:56 DEBUG: new election tree: 4c:82:a9:17:65:27 (met 60, ctr 0)
