@@ -25,8 +25,12 @@
 #include "hashmap.h"
 #include "log.h"
 
-#define PEERS_DEFAULT_TIMEOUT        2000000 /* in ms */
-#define PEERS_DEFAULT_CLEAN_INTERVAL 1000000 /* in ms */
+/* NOTE: both values are in MICROseconds, not milliseconds as previously
+ * documented. They are consumed as us by awdl_clean_peers() (cutoff against
+ * clock_time_us()) and by usec_to_sec() when arming the cleanup timer.
+ * Effective policy: evict peers unheard for 2 s, swept once per second. */
+#define PEERS_DEFAULT_TIMEOUT        2000000 /* in us (2 s) */
+#define PEERS_DEFAULT_CLEAN_INTERVAL 1000000 /* in us (1 s) */
 
 void awdl_peer_state_init(struct awdl_peer_state *state) {
 	state->peers = awdl_peers_init();
