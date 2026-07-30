@@ -35,10 +35,15 @@ MT76=/sys/kernel/debug/ieee80211/phy0/mt76
 OWL=/home/jed/owl/build/daemon/owl
 OUT=/mnt/shared/owl-hoptest2-$(date +%Y%m%d-%H%M%S)
 
+# The "6.12.97 is required" rule is RELAXED as of 2026-07-30. That belief came
+# from a 6.18-vs-6.12.97 comparison that we now know was confounded by the
+# runtime-PM bug (FINDINGS.md §8) - the kernel may never have been the variable.
+# Warn, do not refuse, so other kernels can actually be tested.
 KREL=$(uname -r)
 case "$KREL" in
-  6.12.97*) echo "kernel $KREL - ok" ;;
-  *) echo "REFUSING: kernel is $KREL, need 6.12.97."; exit 1 ;;
+  6.12.97*) echo "kernel $KREL - known-good" ;;
+  *) echo "kernel $KREL - NOT the pinned 6.12.97. Continuing anyway;"
+     echo "  if RX misbehaves, boot 6.12.97 before concluding anything." ;;
 esac
 [ -x "$OWL" ] || { echo "REFUSING: no binary at $OWL"; exit 1; }
 mkdir -p "$OUT" || exit 1
