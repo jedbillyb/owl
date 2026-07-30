@@ -54,14 +54,30 @@ Restore:
 - Sync (link layer, done) is separate from transfer (auth, hard/maybe-blocked).
 - The SYNC result alone is novel and worth writing up regardless of transfer.
 
-## 2026-07-30: kernel pin had drifted, re-pinned
+## 2026-07-30: kernel pin was never actually durable, fixed properly
 - Machine was running 6.18.33_1 despite this doc saying pinned to 6.12.97.
-  `grub-editenv list` showed `saved_entry=gnulinux-simple-...`, not the
-  6.12.97 advanced entry - the pin never actually stuck (or was reset by a
-  grub-mkconfig run since). Re-set:
-  `sudo grub-editenv /boot/grub/grubenv set saved_entry=gnulinux-6.12.97_1-advanced-2e859942-2a74-4cf8-81d2-1db8a58693e6`
+  First attempt (`grub-editenv ... set saved_entry=...6.12.97...`) did NOT
+  survive a reboot - after rebooting, `uname -r` was still 6.18.33_1 and
+  `saved_entry` had reverted to `gnulinux-simple-...`.
+- Root cause: `/etc/default/grub` had `GRUB_DEFAULT=saved` +
+  `GRUB_SAVEDEFAULT=true`. That combo re-saves whatever kernel actually
+  booted as the new default every boot. The 6.12.97 entry lives inside the
+  "Advanced options" submenu; GRUB apparently didn't resolve the saved
+  submenu entry at boot time, fell through to the top-level `simple` entry
+  (tracks newest installed kernel = 6.18.x), booted that, then re-saved
+  `simple` - silently undoing the pin every single time.
+- Real fix: hard-set the default in `/etc/default/grub` instead of relying
+  on grubenv:
+  `GRUB_DEFAULT="gnulinux-6.12.97_1-advanced-2e859942-2a74-4cf8-81d2-1db8a58693e6"`,
+  `GRUB_SAVEDEFAULT=false`, then `sudo grub-mkconfig -o /boot/grub/grub.cfg`.
+  Confirmed the regenerated grub.cfg now has a literal
+  `set default="gnulinux-6.12.97_1-advanced-..."` fallback, not `saved`.
+  Backup of the old config: `/etc/default/grub.bak-20260730`.
 - Needs an actual reboot onto 6.12.97 before any further OWL testing - monitor
-  RX is silently dead on 6.18, see FINDINGS.md §2.
+  RX is silently dead on 6.18, see FINDINGS.md §2. If it ever regresses again,
+  suspect a `grub-mkconfig` re-run (e.g. from a kernel package update)
+  clobbering `/etc/default/grub` back to `GRUB_DEFAULT=saved` - check that
+  file first, not just the running kernel.
 - The one existing hoptest run (`/mnt/shared/owl-hoptest-20260725-230110/`)
   has ZERO peer/election events in owl.log - consistent with the channel
   mismatch bug below, not a failure of the follow-sequence fix (9bac866).
