@@ -666,3 +666,34 @@ firmware across two kernels" should both be treated as withdrawn pending that
 test.** §11's other finding - that 6.18.33 captures far more than 6.12.97 and the
 6.18 monitor-RX regression in §2 is retracted - was measured on same-frequency
 captures (2422 in both cases) and still stands.
+
+
+### 12a. Second same-frequency measurement of the active-monitor RX cost
+
+`awdltest.sh`, 6.18.33, both phases verified on 5180 MHz, back-to-back, 20 s each:
+
+| mode | all frames | AWDL frames |
+|---|---|---|
+| plain | 401 | 0 |
+| active | **10** | 0 |
+
+Combined with `activetest2.sh` (186 vs 35 on 5180), there are now two properly
+controlled, same-frequency measurements. Active monitor retains only **2.5-19%**
+of plain reception. The direction of §10's claim was right; the "96-99%" figure
+it quoted was not, and only these same-frequency numbers should be cited.
+
+The AWDL question itself is **still unanswered**: both phases saw zero AWDL
+frames because the phone was not advertising on ch36 during the run, so the run
+is void by the script's own guard rather than being read as a result.
+
+**Structural problem this exposes.** Active monitor cannot retune, so it can only
+ever listen on 5180 MHz (ch36). The phone's channel usage is not under our
+control and was observed on ch6 and ch149 as often as ch36. So even if active
+monitor could hear AWDL in principle, it can only do so during the fraction of
+time the phone happens to favour ch36 - and it must do that while receiving under
+10% of frames. Both constraints have to be satisfied at once.
+
+That makes AirDrop on this chip unlikely rather than merely unproven, but the
+honest status is: **not yet established either way.** Confirming it requires a
+run where plain monitor sees AWDL frames on ch36 (proving the phone is reachable
+there) and active monitor is then given the same opportunity.
