@@ -125,13 +125,18 @@ sudo iw dev $MON del 2>/dev/null
 # ACK incoming frames)".
 sudo iw phy phy0 interface add $MON type monitor flags active \
   || { echo "FAILED to create $MON"; exit 1; }
-# Confirm the flag actually took - a silent downgrade would look like the same
-# one-way failure and waste another evening.
-if iw dev $MON info 2>/dev/null | grep -qi "active"; then
-  echo "  active monitor: ON"
+# NOTE: `iw dev <dev> info` does NOT report monitor flags, so grepping its
+# output for "active" can never succeed - an earlier version of this script did
+# that and printed a bogus warning on every run. Instead, explicitly (re)apply
+# active monitor and trust the driver's exit status, which is a real signal.
+sudo ip link set $MON down 2>/dev/null
+if sudo iw dev $MON set monitor active 2>/dev/null; then
+  echo "  active monitor: accepted by driver"
 else
-  echo "  WARNING: could not confirm active monitor is on. Expect a one-way path."
+  echo "  WARNING: driver REJECTED active monitor - expect a one-way path,"
+  echo "           because unicast AWDL frames will never be ACKed."
 fi
+sudo ip link set $MON up
 sudo ip link set $MON up
 sudo sh -c "echo 0 > $MT76/runtime-pm"
 sudo sh -c "echo 0 > $MT76/deep-sleep"
