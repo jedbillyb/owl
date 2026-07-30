@@ -54,6 +54,19 @@ Restore:
 - Sync (link layer, done) is separate from transfer (auth, hard/maybe-blocked).
 - The SYNC result alone is novel and worth writing up regardless of transfer.
 
+## 2026-07-30: kernel pin had drifted, re-pinned
+- Machine was running 6.18.33_1 despite this doc saying pinned to 6.12.97.
+  `grub-editenv list` showed `saved_entry=gnulinux-simple-...`, not the
+  6.12.97 advanced entry - the pin never actually stuck (or was reset by a
+  grub-mkconfig run since). Re-set:
+  `sudo grub-editenv /boot/grub/grubenv set saved_entry=gnulinux-6.12.97_1-advanced-2e859942-2a74-4cf8-81d2-1db8a58693e6`
+- Needs an actual reboot onto 6.12.97 before any further OWL testing - monitor
+  RX is silently dead on 6.18, see FINDINGS.md §2.
+- The one existing hoptest run (`/mnt/shared/owl-hoptest-20260725-230110/`)
+  has ZERO peer/election events in owl.log - consistent with the channel
+  mismatch bug below, not a failure of the follow-sequence fix (9bac866).
+  That fix has still never been validated against a real device.
+
 ## 2026-07-25: radio channel does not match requested channel
 - `iw dev wlp2s0 set channel 149` -> `iw info` reports 149, but every frame
   captured arrives tagged 5180 MHz (= channel 36). Plain iw, not OWL's netlink
