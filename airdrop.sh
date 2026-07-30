@@ -116,7 +116,22 @@ sudo pkill -x wpa_supplicant 2>/dev/null; sudo pkill -x dhcpcd 2>/dev/null; slee
 sudo iw reg set NZ
 sudo ip link set $IFACE down
 sudo iw dev $MON del 2>/dev/null
-sudo iw phy phy0 interface add $MON type monitor || { echo "FAILED to create $MON"; exit 1; }
+# `flags active` is ESSENTIAL, not cosmetic. Active monitor makes the card ACK
+# received frames. AWDL data frames are unicast, so without ACKs the phone
+# retransmits up to 7 times, gives up, and we get a ONE-WAY path: our mDNS
+# queries go out, nothing ever comes back. That was measured on 2026-07-30
+# (ping6 100% loss, from_peer=0) before this flag was added. The chip supports
+# it - `iw phy phy0 info` reports "Device supports active monitor (which will
+# ACK incoming frames)".
+sudo iw phy phy0 interface add $MON type monitor flags active \
+  || { echo "FAILED to create $MON"; exit 1; }
+# Confirm the flag actually took - a silent downgrade would look like the same
+# one-way failure and waste another evening.
+if iw dev $MON info 2>/dev/null | grep -qi "active"; then
+  echo "  active monitor: ON"
+else
+  echo "  WARNING: could not confirm active monitor is on. Expect a one-way path."
+fi
 sudo ip link set $MON up
 sudo sh -c "echo 0 > $MT76/runtime-pm"
 sudo sh -c "echo 0 > $MT76/deep-sleep"

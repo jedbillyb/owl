@@ -79,7 +79,7 @@ sudo iw reg set NZ
 # --- dedicated monitor vif (bug 2 workaround) ---
 sudo ip link set $IFACE down
 sudo iw dev $MON del 2>/dev/null   # in case a previous run left one
-sudo iw phy phy0 interface add $MON type monitor || { echo "FAILED to create $MON"; exit 1; }
+sudo iw phy phy0 interface add $MON type monitor flags active || { echo "FAILED to create $MON"; exit 1; }
 sudo ip link set $MON up
 
 # --- power management off (bug 1 workaround) ---
