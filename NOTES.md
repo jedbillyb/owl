@@ -1,17 +1,45 @@
 # AWDL / OWL on MT7921 - project notes
 
-## Status: BLOCKED (2026-07-30) - it worked once, it does not work now
-Synced with a real Apple device once, on 2026-07-25: peer discovery,
-channel-sequence parsing and master election all confirmed on an MT7921
-Filogic 330. `sync-log.txt` is a real transcript of it.
+## Status: WORKS - synced with an iPhone, and 9bac866 is validated (2026-07-30)
+Peer discovery, channel-sequence parsing, master election AND the
+follow-the-peer-sequence fix all confirmed against a live iPhone on the MT7921.
+Peer held 9.78 s (old behaviour: evicted at ~2-3 s). Radio verifiably hopped
+149 -> 6 following the peer's advertised sequence.
 
-**But it is not currently reproducible.** Monitor-mode RX on this card now
-delivers zero frames - confirmed three independent ways, including a failed
-positive control on the AP's own channel. See the 2026-07-30 entry at the
-bottom and FINDINGS.md §8. Why it once worked is still unexplained.
+The earlier "BLOCKED / monitor RX is dead" state is RESOLVED. It was two
+stacked mt7921 bugs, neither of them the kernel:
 
-START HERE next session: pick one of the three paths listed in the
-2026-07-30 entry (AR9271 USB adapter is the most promising).
+1. **runtime PM.** `runtime-pm` and `deep-sleep` default to 1; in monitor mode
+   nothing keeps the chip awake so it sleeps and delivers ZERO frames, silently.
+   Must be set to 0. NOTE debugfs is not mounted by default:
+   `sudo mount -t debugfs none /sys/kernel/debug` first.
+2. **in-place type switch never retunes the radio.** `iw dev wlp2s0 set type
+   monitor` pins the hardware at 5180 MHz forever while `iw` reports whatever
+   channel you asked for. THIS was the real 2026-07-25 "tagged 5180" mystery.
+   Fix: use a dedicated vif, `iw phy phy0 interface add mon0 type monitor`.
+3. Minor: OWL needs `-N` on a pre-made monitor vif, or its own set-monitor-mode
+   call fails with EBUSY and it aborts during init.
+
+Use `./hoptest2.sh` (not hoptest.sh - that one has both bugs). Full detail in
+FINDINGS.md §9. Working invocation:
+
+    sudo mount -t debugfs none /sys/kernel/debug
+    sudo ip link set wlp2s0 down
+    sudo iw phy phy0 interface add mon0 type monitor
+    sudo ip link set mon0 up
+    sudo sh -c 'echo 0 > /sys/kernel/debug/ieee80211/phy0/mt76/runtime-pm'
+    sudo sh -c 'echo 0 > /sys/kernel/debug/ieee80211/phy0/mt76/deep-sleep'
+    sudo iw dev mon0 set freq 5745
+    sudo ./build/daemon/owl -i mon0 -c 149 -N -vv
+
+## NEW open question: the hop lands, but the dwell is short
+Independent 20 Hz radio poller over a 60 s run: ch149 97.3%, ch6 2.7%. The
+peer's sequence had 1 of 6 non-zero slots on ch6, so ~16.7% was expected. The
+radio reaches the away-channel for about a sixth of its scheduled dwell.
+That is the §6 research question answered quantitatively: a fully-offloaded
+MT7921 CAN be hopped from userspace at AWDL rates, but firmware switch latency
+eats most of the away-channel window. Enough to hold a peer, probably not
+enough to carry data. Next: measure per-hop switch latency from radio.log.
 
 ## Kernel pin - real, but NOT the current problem
 - Kernel 6.18 has a broken mt76 monitor-mode RX path (card injects fine,
@@ -19,11 +47,14 @@ START HERE next session: pick one of the three paths listed in the
 - The pin now actually holds. It took two attempts; see the two 2026-07-30
   GRUB entries below for why `GRUB_DEFAULT=saved` and the "Advanced options"
   submenu silently defeated it. Verified booting 6.12.97_1 unattended.
-- CAVEAT: monitor RX is dead on 6.12.97 too, as of 2026-07-30. So booting the
-  pinned kernel is necessary but no longer sufficient. Do not assume a working
-  capture just because `uname -r` looks right.
+- CAVEAT: booting the pinned kernel is necessary but NOT sufficient. You also
+  need PM off and a dedicated mon0 vif (see the status section at the top).
+  6.12.97 alone gives you nothing.
 - Still worth checking `uname -r` first if things look broken. But it is no
   longer the whole explanation it used to be.
+- Untested: whether the mon0 + PM-off recipe also rescues 6.18. Plausible that
+  the "6.18 regression" was always one of these two bugs and the kernel was
+  never the variable. Worth one run on 6.18 before trusting the pin story.
 - "TX power stuck at 3 dBm" is RETRACTED as a symptom - it reads 3.00 dBm in
   managed mode too, while passing traffic normally. Cosmetic, ignore it.
 
@@ -34,15 +65,11 @@ START HERE next session: pick one of the three paths listed in the
          cmake --build build --target owl
 - Binary: ~/owl/build/daemon/owl
 
-## Run (kills internet on the card while running)
-    sudo sv down NetworkManager
-    sudo pkill -x wpa_supplicant; sudo pkill -x dhcpcd; sleep 1
-    sudo iw reg set NZ
-    sudo ip link set wlp2s0 down
-    sudo ./owl -i wlp2s0 -c 149 -v      # -c 44 or 149 for 5GHz (Mac lives there)
-Restore:
-    sudo ip link set wlp2s0 down; sudo iw dev wlp2s0 set type managed
-    sudo ip link set wlp2s0 up; sudo sv up NetworkManager
+## Run - SUPERSEDED, see the status section at the top of this file
+The invocation that used to be here ran OWL directly on wlp2s0 with an in-place
+`set type monitor`. That hits BOTH mt7921 bugs: the chip sleeps (zero RX) and the
+radio stays pinned at 5180 MHz. It cannot work. Kept only so the old logs make
+sense. Use `./hoptest2.sh`, or the mon0 + PM-off recipe at the top.
 
 ## Discovery notes
 - Lone OWL node sits STATIC on its master channel (chanseq_init_static, all
@@ -50,7 +77,9 @@ Restore:
 - Local environment is all 5GHz. Must run -c 44 or -c 149 to hear the Mac.
 - Mac's advertised sequence seen: 149,149,149,149,149,149,36,36,6,149,149,149,149,149,36,36
 
-## OPEN PROBLEM (next session)
+## RESOLVED 2026-07-30 - was: peer dropped after ~4 seconds
+Fixed by 9bac866 and validated on 2026-07-30 (peer held 9.78 s, radio observed
+hopping 149 -> 6). The analysis below was correct. Kept for the record.
 - Peer is discovered and added, then DROPPED after ~4 seconds.
 - Cause: OWL stays static on one channel while the Mac hops its full sequence
   (149/36/6). OWL misses the availability windows on 36 and 6, can't maintain
@@ -107,9 +136,10 @@ Restore:
 - Monitor RX itself is fine (22 pkts, 0 dropped) on 6.12.97.
 - txpower read 3.00 dBm on 6.12.97 - FINDINGS §2 lists this as a 6.18 symptom.
   Run did not force `txpower fixed 2000`. §2 claim needs qualifying or dropping.
-- UNRESOLVED: is the radio actually on 36, or is mt76 mislabelling the radiotap
-  frequency field? Sweep 36/44/149 and see whether reported freq tracks. That
-  test is written up in the chat log, run it first thing.
+- RESOLVED 2026-07-30: the radio really was on 5180, and mt76 was NOT
+  mislabelling. Cause is the in-place `set type monitor` never retuning the
+  hardware - it sits at 5180 forever while iw reports the requested channel.
+  A dedicated mon0 vif tunes correctly. See FINDINGS.md §9.
 
 ## 2026-07-30: kernel pin fix attempt #2 - GRUB doesn't recurse into submenus for default=<id>
 - Attempt #1 (hardcode GRUB_DEFAULT to the entry ID, disable GRUB_SAVEDEFAULT)

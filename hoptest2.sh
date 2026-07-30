@@ -118,7 +118,10 @@ POLL_PID=$!
 sudo timeout $((DUR + 5)) tcpdump -i $MON -w "$OUT/awdl.pcap" >/dev/null 2>&1 &
 
 # --- stream 1: OWL on the monitor vif, timestamped on the same clock ---
-sudo stdbuf -oL "$OWL" -i $MON -c $CHAN -vv 2>&1 \
+# -N = do not try to put the device in monitor mode. mon0 is ALREADY a monitor
+# vif and is up, so OWL's own nl80211 set-type call fails with EBUSY ("Object
+# busy") and init aborts. -N skips that step. Without it OWL never starts.
+sudo stdbuf -oL "$OWL" -i $MON -c $CHAN -N -vv 2>&1 \
   | python3 -u -c 'import sys,time
 for l in sys.stdin: sys.stdout.write("%.6f %s" % (time.time(), l))' > "$OUT/owl.log" &
 
@@ -150,23 +153,26 @@ if grep -qE "add peer|remove peer|changed channel sequence|election tree" "$OUT/
   echo "  Peer lifetime (the 9bac866 question - did it survive past ~3s?):"
   python3 - "$OUT/owl.log" << 'PY'
 import sys, re
-adds, rems = [], []
+stamps, adds, rems = [], [], []
 for line in open(sys.argv[1], errors='replace'):
     m = re.match(r'(\d+\.\d+)', line)
     if not m: continue
     t = float(m.group(1))
+    stamps.append(t)
     if 'add peer' in line: adds.append(t)
     elif 'remove peer' in line: rems.append(t)
 if not adds:
     print("    no peer ever added")
 else:
+    last = max(stamps)
     for i, a in enumerate(adds):
         later = [r for r in rems if r > a]
         if later:
-            print("    peer %d: held %.2f s" % (i + 1, later[0] - a))
+            print("    peer %d: held %.2f s (then evicted)" % (i + 1, later[0] - a))
         else:
-            print("    peer %d: still held at end of run (>= %.2f s) <-- FIX WORKS"
-                  % (i + 1, adds[-1] and 0 or 0))
+            print("    peer %d: held >= %.2f s, STILL HELD when the run ended"
+                  % (i + 1, last - a))
+    print("    (old behaviour was eviction at ~2-3 s - anything well past that is the fix working)")
 PY
 else
   echo "    NONE - no peer discovered"

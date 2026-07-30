@@ -370,3 +370,112 @@ watchdog that restores networking even if the script is `kill -9`'d or hangs,
 which a trap alone cannot survive. The watchdog mechanism was verified to fire
 after a hard kill before being relied on. No test can leave the machine without
 wifi.
+
+## 9. 2026-07-30 (later): both bugs found, and `9bac866` is validated
+
+§8 closes. The zero-RX problem was **two independent mt7921 bugs stacked on top of
+each other**, and neither is the kernel. With both worked around, OWL synchronised
+with an iPhone and the follow-the-peer-channel-sequence fix demonstrably works.
+
+### Bug 1: runtime power management silently kills monitor RX
+
+`runtime-pm` and `deep-sleep` both default to `1`, and `runtime_pm_stats` showed
+the chip dozing roughly twice as long as it was awake. In managed mode the
+association keeps it awake. In monitor mode nothing does, so it sleeps and
+delivers **zero** frames, with no error anywhere.
+
+```
+/sys/kernel/debug/ieee80211/phy0/mt76/runtime-pm   -> must be 0
+/sys/kernel/debug/ieee80211/phy0/mt76/deep-sleep   -> must be 0
+```
+
+Note `debugfs` is **not mounted by default** on this box:
+`sudo mount -t debugfs none /sys/kernel/debug` first, or the knobs do not exist.
+`pmtest.sh` demonstrates it: PM on = 0 frames, PM off = frames arrive. (The
+control phase was not a clean zero, because writing the knob itself wakes the
+chip and it stays awake - so treat the knob as "wake and stay awake", not a
+clean on/off switch.)
+
+### Bug 2: an in-place interface type switch never retunes the radio
+
+This is the real explanation for the 2026-07-25 "frames tagged 5180 MHz while iw
+reports 149" mystery, and it is worse than it looked - the radio never leaves
+5180 MHz **at all**.
+
+`iw dev wlp2s0 set type monitor` (what `monitor-test.sh`, `hoptest.sh` and every
+earlier harness did) leaves the hardware pinned at 5180 MHz no matter what
+channel is requested, while `iw` faithfully reports whatever was asked for. A
+**dedicated monitor vif** tunes correctly. `montest.sh`, target 5745 MHz:
+
+| method | dominant RX freq | verdict |
+|---|---|---|
+| in-place `set type monitor`, 149 set first | 5180 | stuck |
+| `set freq 5745` | no frames | - |
+| `set freq 5745 HT20` | no frames | - |
+| `set channel 149` + link down/up bounce | 5180 | stuck |
+| **`iw phy phy0 interface add mon0 type monitor`** | **5745** | **works** |
+
+So the correct setup is:
+
+```sh
+sudo mount -t debugfs none /sys/kernel/debug        # if not already mounted
+sudo ip link set wlp2s0 down
+sudo iw phy phy0 interface add mon0 type monitor
+sudo ip link set mon0 up
+sudo sh -c 'echo 0 > /sys/kernel/debug/ieee80211/phy0/mt76/runtime-pm'
+sudo sh -c 'echo 0 > /sys/kernel/debug/ieee80211/phy0/mt76/deep-sleep'
+sudo iw dev mon0 set freq 5745
+sudo ./build/daemon/owl -i mon0 -c 149 -N -vv
+```
+
+### Bug 3 (minor): OWL needs `-N` on a pre-made monitor vif
+
+OWL calls `set_monitor_mode()` itself (`daemon/io.c:296`). On an interface that is
+already a monitor vif **and up**, that nl80211 call fails with `EBUSY` and OWL
+aborts before it starts:
+
+```
+ERROR: Error while receiving via netlink: Object busy
+ERROR: Could not put device in monitor mode: mon0
+ERROR: could not initialize core
+```
+
+`-N` sets `wlan_no_monitor_mode` and skips the step. The option already existed
+upstream; no patch needed.
+
+### Result: sync with an iPhone, and the peer is held
+
+`hoptest2.sh`, 60 s, iPhone with the AirDrop sheet open, OWL on `mon0` at ch 149:
+
+- **2018 frames** captured, including **266 real AWDL action frames** on the AWDL
+  BSSID `00:25:00:ff:94:73` from `42:24:66:35:43:0c` at -16 dBm.
+- Channel sequence parsed from the phone:
+  `149,149,149,0,0,0,0,0,6,149,149,0,0,0,0,0`
+- Election resolved correctly, phone winning:
+  `new election tree: 4c:82:a9:17:65:27 -> 42:24:66:35:43:c (met 65, ctr 223)`
+- **Peer lifetimes: 9.78 s, then a second peer still held when the run ended
+  (>= 3.56 s).** Against a 2 s timeout swept by a 1 s cleaner, the old behaviour
+  was eviction at ~2-3 s. **`9bac866` is validated.**
+
+### The hop happens - but the dwell is short, and that is the real finding
+
+The independent 20 Hz radio poller (which never reads OWL's state, only the
+driver's) recorded the radio on two channels:
+
+| channel | samples | share |
+|---|---|---|
+| 149 | 1060 | 97.3% |
+| 6 | 29 | 2.7% |
+
+So OWL genuinely adopted the peer's sequence and hopped to channel 6, and frames
+were captured on both 5745 MHz and 2437 MHz. But the peer's sequence had one
+channel-6 slot out of six non-zero slots, i.e. **~16.7% expected against 2.7%
+observed** - the radio reaches channel 6 for roughly a sixth of its scheduled
+dwell.
+
+That is a direct, quantified answer to the open research question in §6: a
+fully-offloaded MT7921 *can* be driven to hop from userspace at AWDL rates, but
+firmware channel-switch latency eats most of the availability window on the
+away-channel. Enough to hold a peer; probably not enough to carry data reliably
+in those slots. Worth measuring properly - per-hop switch latency from the
+radio.log timestamps is the obvious next step.
