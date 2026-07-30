@@ -76,6 +76,7 @@ struct awdl_peer *awdl_peer_new(const struct ether_addr *addr) {
 	peer->sequence_enc = AWDL_CHAN_ENC_OPCLASS;
 	peer->has_sequence = 0;
 	peer->sync_offset = 0;
+	peer->last_data_rx = 0;
 	peer->devclass = 0;
 	peer->version = 0;
 	peer->supports_v2 = 0;

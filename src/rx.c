@@ -356,12 +356,17 @@ int awdl_rx_data(const struct buf *frame, struct buf ***out, const struct ether_
                  const struct ether_addr *dst, struct awdl_state *state) {
 	uint16_t ether_type;
 	int offset = 0;
+	struct awdl_peer *peer;
 
 	log_trace("awdl_data: receive from %s", ether_ntoa(src));
 	state->stats.rx_data++;
 
-	if (awdl_peer_get(state->peers.peers, src, NULL) != PEERS_OK)
+	if (awdl_peer_get(state->peers.peers, src, &peer) != PEERS_OK)
 		return RX_IGNORE_PEER;
+
+	/* Mark this peer as one we are exchanging traffic with, so the chanseq
+	 * adoption in core.c can prefer it over the elected sync master. */
+	peer->last_data_rx = clock_time_us();
 
 	if (!awdl_valid_llc_header(frame))
 		return RX_UNEXPECTED_FORMAT;
