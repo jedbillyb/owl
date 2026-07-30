@@ -1,16 +1,31 @@
 # AWDL / OWL on MT7921 - project notes
 
-## Status: WORKS (with one open problem)
-Synced with a real Apple device. Peer discovery, channel-sequence parsing,
-and master election all confirmed on an MT7921 Filogic 330. Reproducible.
+## Status: BLOCKED (2026-07-30) - it worked once, it does not work now
+Synced with a real Apple device once, on 2026-07-25: peer discovery,
+channel-sequence parsing and master election all confirmed on an MT7921
+Filogic 330. `sync-log.txt` is a real transcript of it.
 
-## CRITICAL: kernel pin
-- Kernel 6.18 has a broken mt76 monitor-mode RX path. Card injects (TX) fine
-  but captures ZERO frames in monitor mode. TX power also stuck at 3 dBm.
-- Kernel 6.12.97 works. Monitor RX confirmed (beacons flood in).
-- GRUB pinned to 6.12.97 via saved_entry. DO NOT let it boot 6.18 or monitor
-  RX silently dies and everything looks broken again.
-- If it ever "randomly breaks after reboot": check `uname -r`. If 6.18, that's why.
+**But it is not currently reproducible.** Monitor-mode RX on this card now
+delivers zero frames - confirmed three independent ways, including a failed
+positive control on the AP's own channel. See the 2026-07-30 entry at the
+bottom and FINDINGS.md §8. Why it once worked is still unexplained.
+
+START HERE next session: pick one of the three paths listed in the
+2026-07-30 entry (AR9271 USB adapter is the most promising).
+
+## Kernel pin - real, but NOT the current problem
+- Kernel 6.18 has a broken mt76 monitor-mode RX path (card injects fine,
+  captures nothing). 6.12.97 was believed good.
+- The pin now actually holds. It took two attempts; see the two 2026-07-30
+  GRUB entries below for why `GRUB_DEFAULT=saved` and the "Advanced options"
+  submenu silently defeated it. Verified booting 6.12.97_1 unattended.
+- CAVEAT: monitor RX is dead on 6.12.97 too, as of 2026-07-30. So booting the
+  pinned kernel is necessary but no longer sufficient. Do not assume a working
+  capture just because `uname -r` looks right.
+- Still worth checking `uname -r` first if things look broken. But it is no
+  longer the whole explanation it used to be.
+- "TX power stuck at 3 dBm" is RETRACTED as a symptom - it reads 3.00 dBm in
+  managed mode too, while passing traffic normally. Cosmetic, ignore it.
 
 ## Build
 - Repo: seemoo-lab/owl at ~/owl (copied off /mnt/shared - NTFS strips exec bit)
