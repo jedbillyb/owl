@@ -600,3 +600,69 @@ better RX does not automatically mean the rest of the stack behaves.
 | Hop-latency characterisation | **measured** (§9) |
 | AirDrop transfer on MT7921 | **impossible** - firmware cannot ACK on a monitor vif |
 | AirDrop transfer at all | needs ath9k / AR9271; auth (§7) still untested beyond that |
+
+
+## 12. 2026-07-30: CORRECTION - §10 and §11 were based on an invalid comparison
+
+§10 and §11 concluded that active monitor "destroys 96-99% of RX" and that this
+was a firmware limitation confirmed across two kernels. **That conclusion was
+not supported by the data.** The test never verified what frequency each phase
+was actually on.
+
+`activetest.sh` requested 2422 MHz for every phase. Checking the radiotap
+frequency of the captured frames afterwards:
+
+| phase | frames | actual frequency |
+|---|---|---|
+| plain | 2000 | 2422 (busy 2.4 GHz, AP present) |
+| `flags active` | 9 | **5180** (quiet 5 GHz) |
+| plain again | 1399 | 2422 |
+
+The active phase silently never left 5180. So a busy channel was compared
+against a quiet one and the difference was attributed to ACKs. 9 frames on 5180
+is entirely normal here - earlier 5 GHz captures in §9 gave 1-10 frames.
+
+This is the same error as the retracted "the radio tunes correctly" claim in §8:
+trusting a frame count without checking which channel produced it. On this chip
+`iw`'s reported channel is unreliable, so **the radiotap frequency of received
+frames is the only trustworthy indicator** and must be checked in every
+comparison.
+
+### Corrected result (`activetest2.sh`, both modes on both frequencies)
+
+| target | mode | actual rx | frames |
+|---|---|---|---|
+| 2422 | plain | 2422 | 156 |
+| 2422 | active | **5180 (off target)** | 7 |
+| 5180 | plain | 5180 | 186 |
+| 5180 | active | 5180 | **35** |
+
+Two separate findings, neither as previously stated:
+
+1. **Active monitor cannot retune.** It stays on 5180 MHz whatever is requested,
+   and `iw dev mon0 info` reports no channel at all for it. This, not reception,
+   is the real defect.
+2. **At equal frequency, active monitor costs ~81% of reception (186 -> 35) and
+   still works.** Degraded, not broken. The "96-99%" figure was an artefact of
+   the channel confound.
+
+### What this opens up
+
+5180 MHz is channel 36, which the iPhone was repeatedly observed to favour
+(36-dominant sequences in §9 and later runs). So active monitor being pinned
+there is not necessarily fatal:
+
+- ACKs work, so unicast AWDL data can be acknowledged - the thing that made the
+  path one-way in §10.
+- No channel hopping is possible, so OWL must sit statically on ch36 and will
+  miss the peer's slots on other channels.
+
+That trade is worth testing: `ACTIVE=1 ./airdrop.sh` now selects active monitor,
+skips the channel sweep, and forces ch36. If layer 2.5 reports bidirectional IP,
+AirDrop on the built-in MT7921 is back in play.
+
+**§10's "AirDrop is not reachable on the MT7921" and §11's "confirmed in
+firmware across two kernels" should both be treated as withdrawn pending that
+test.** §11's other finding - that 6.18.33 captures far more than 6.12.97 and the
+6.18 monitor-RX regression in §2 is retracted - was measured on same-frequency
+captures (2422 in both cases) and still stands.

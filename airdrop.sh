@@ -121,20 +121,29 @@ sudo pkill -x wpa_supplicant 2>/dev/null; sudo pkill -x dhcpcd 2>/dev/null; slee
 sudo iw reg set NZ
 sudo ip link set $IFACE down
 sudo iw dev $MON del 2>/dev/null
-# NOTE: created PLAIN, deliberately - do NOT add `flags active`.
-# mt7921 advertises "Device supports active monitor (which will ACK incoming
-# frames)" but activetest.sh (2026-07-30) measured, on ch3 with the AP present:
-#   6.12.97: plain=140, flags active=6,  plain again=144
-#   6.18.33: plain=2000, flags active=9,  plain again=1399
-# Active monitor destroys ~96-99% of RX on BOTH kernels, so this is firmware,
-# not a driver bug, and no kernel will fix it. So the choice is:
-#   plain  -> RX works, no ACKs, ONE-WAY path (AirDrop cannot complete)
-#   active -> ACKs, but RX crippled, so nothing arrives to ACK anyway
-# Neither allows AirDrop on the built-in MT7921. Plain is chosen because
-# reception is what makes the AWDL sync research result possible at all.
-# For actual AirDrop, use a card with working active monitor (ath9k / AR9271).
-sudo iw phy phy0 interface add $MON type monitor \
-  || { echo "FAILED to create $MON"; exit 1; }
+# Monitor vif mode. Two measured trade-offs (activetest2.sh, 2026-07-30, with
+# the ACTUAL radiotap frequency verified - not iw's claim, which lies here):
+#
+#   plain : retunes correctly. 186 frames/8s on 5180. NO ACKs, so unicast AWDL
+#           data is never acknowledged -> one-way path -> AirDrop cannot complete.
+#   active: ACKs, and DOES still receive (35 frames/8s on 5180, ~81% less than
+#           plain). But it CANNOT retune - it is pinned to 5180 MHz and iw does
+#           not even report a channel for it.
+#
+# 5180 MHz is channel 36, which the phone favours heavily, so ACTIVE=1 is worth
+# trying despite the lack of channel control: no hopping, but possibly a
+# two-way path. That is the only route to AirDrop on this chip.
+#   ACTIVE=1 ./airdrop.sh        # ACKs, locked to ch36, no hopping
+#   ./airdrop.sh                 # default: plain, hops, one-way
+if [ "${ACTIVE:-0}" = "1" ]; then
+  echo "  mode: ACTIVE monitor (ACKs; pinned to 5180/ch36; no hopping)"
+  sudo iw phy phy0 interface add $MON type monitor flags active \
+    || { echo "FAILED to create $MON"; exit 1; }
+else
+  echo "  mode: plain monitor (retunes and hops, but one-way - no ACKs)"
+  sudo iw phy phy0 interface add $MON type monitor \
+    || { echo "FAILED to create $MON"; exit 1; }
+fi
 sudo ip link set $MON up
 sudo sh -c "echo 0 > $MT76/runtime-pm"
 sudo sh -c "echo 0 > $MT76/deep-sleep"
@@ -158,6 +167,12 @@ POLL_PID=$!
 # This also distinguishes "phone is silent" from "phone is elsewhere", which
 # guessing cannot.
 echo ""
+if [ "${ACTIVE:-0}" = "1" ]; then
+  echo "### layer 0: SKIPPED - active monitor cannot retune, forcing ch36"
+  CHAN=36; CHAN_MHZ=5180
+  sudo iw dev $MON set freq $CHAN_MHZ 2>/dev/null
+  BEST_N="n/a"
+else
 echo "### layer 0: locating the phone (AWDL BSSID 00:25:00:ff:94:73)"
 AWDL_BSSID="00:25:00:ff:94:73"
 BEST_CHAN=""; BEST_N=0; SAW_ANY=0
@@ -195,6 +210,7 @@ CHAN=$BEST_CHAN
 case "$CHAN" in 6) CHAN_MHZ=2437 ;; 36) CHAN_MHZ=5180 ;; 44) CHAN_MHZ=5220 ;; 149) CHAN_MHZ=5745 ;; esac
 sudo iw dev $MON set freq $CHAN_MHZ 2>/dev/null
 sleep 1
+fi
 
 # -N because mon0 is already a monitor vif and up; OWL's own set-monitor-mode
 # would fail with EBUSY. We did that setup ourselves above.
