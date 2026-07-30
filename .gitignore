@@ -5,3 +5,4 @@ cmake-build-release/
 
 # Build files
 build/
+.venv-opendrop/
