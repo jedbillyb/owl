@@ -1,5 +1,37 @@
 # Open Wireless Link
 
+> ## Unsupported personal fork
+>
+> This is a personal fork of [seemoo-lab/owl](https://github.com/seemoo-lab/owl),
+> not affiliated with or endorsed by the Open Wireless Link project. There is no
+> support and no warranty. Issues and PRs may sit unread. **If you want upstream,
+> go to [seemoo-lab/owl](https://github.com/seemoo-lab/owl).**
+>
+> ### What differs from upstream
+>
+> - **Two MediaTek MT7921 workarounds.** Monitor RX on `mt76` silently delivers
+>   nothing while runtime power management is on, and an in-place interface type
+>   switch never retunes the radio. Both cost a day to find; neither reports an
+>   error.
+> - **Channel sequence follows the data peer, not the election winner.** Upstream
+>   adopts the sync master's sequence, which in a room with several Apple devices
+>   is usually a bystander - so you are off-channel for most of your transfer
+>   peer's availability windows. This tracks which peer is actually sending you
+>   data and follows that one instead.
+> - `-N` handling on a pre-made monitor vif.
+>
+> ### Note on the requirement below
+>
+> Upstream's README says you need a card with working active monitor mode, and in
+> practice people read that as "buy an Atheros AR9271". **That is not the whole
+> story.** A MediaTek MT7921 can do it, if you create a plain monitor vif and tune
+> it *first*, then add the active vif alongside it - they share one channel
+> context, so you get hardware ACKs and channel hopping at once.
+>
+> The tool, the OpenDrop patches for iOS 26, and the full investigation live in
+> **[jedbillyb/airdrop-mt7921](https://github.com/jedbillyb/airdrop-mt7921)**.
+> This repo is just the OWL changes.
+
 [![Language grade](https://img.shields.io/lgtm/grade/cpp/g/seemoo-lab/owl.svg?logo=lgtm&label=code%20quality)](https://lgtm.com/projects/g/seemoo-lab/owl/context:cpp)
 
 *Open Wireless Link (OWL)* is an open implementation of the Apple Wireless Direct Link (AWDL) ad hoc protocol for Linux and macOS written in C and part of the [Open Wireless Link project](https://owlink.org).
