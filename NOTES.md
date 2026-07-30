@@ -205,3 +205,36 @@ setsid-detached watchdog that restores networking even if the script is kill -9'
 or hangs (a trap cannot survive SIGKILL). Watchdog was verified to fire after a
 hard kill before being relied on. Do not add a test here without that pattern -
 an earlier ad-hoc monitor-mode command with no trap did drop wifi.
+
+## 2026-07-31: active monitor is pinned at 5180 no matter what - MT7921 is done
+New script `activelate.sh`. Every previous active-monitor test created the vif
+with `flags active` at creation; nobody had varied the ORDER. Four orderings,
+one target frequency (2412, busiest from a scan), radiotap-verified, run twice:
+
+  A plain, tuned after up                          -> 2412  (1883 frames)
+  B flags active at create, tuned after up         -> 5180  (13)
+  C plain + tuned, THEN set monitor active         -> 5180  (2)
+  D flags active at create, tuned while link down  -> 5180  (6)
+
+C is the one that mattered: a vif provably sitting on 2412 and receiving jumps
+to 5180 the moment active mode engages, while `iw` keeps saying 2412.
+
+Two gotchas worth remembering:
+- `iw dev <vif> set monitor active` returns EBUSY on an up vif; link must be down.
+- Monitor flags are NOT readable. `iw dev <vif> info` prints nothing about them,
+  so grepping it for "active" always says no. Judge by accepted-or-refused, and
+  by the frames.
+
+So AirDrop on the built-in chip is settled in the negative (FINDINGS §13): OWL
+needs active mode for ACKs, active mode means 5180 only, and the phone's channel
+is not ours to pick. Sync still works and remains the real result.
+
+### Next, in order of promise
+1. AR9271 USB adapter for an actual transfer (still not plugged in - lsusb shows
+   no Atheros device). Only remaining path to AirDrop, and the only way to reach
+   the untested §7 auth wall.
+2. One hoptest2.sh run on 6.18.33, then drop the kernel pin (6.18 captures ~10x
+   more; only its RX path has been retested so far).
+3. Write up the §9 hop-latency result - away-channel dwell 45 ms/visit but hops
+   fire ~14x less often than the 16-slot sequence dictates. That is the
+   publishable answer to FINDINGS §6.

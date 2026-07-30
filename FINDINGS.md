@@ -697,3 +697,59 @@ That makes AirDrop on this chip unlikely rather than merely unproven, but the
 honest status is: **not yet established either way.** Confirming it requires a
 run where plain monitor sees AWDL frames on ch36 (proving the phone is reachable
 there) and active monitor is then given the same opportunity.
+
+
+## 13. 2026-07-31: the 5180 pin survives every ordering - the built-in chip is out
+
+§10-§12 all rested on active-monitor vifs created with `flags active` **at
+creation time**, which then refused to leave 5180 MHz. That left an obvious
+untested variable: the *order* of the two operations. If the firmware only
+rejects a retune while active mode is already engaged, tuning first and enabling
+active afterwards would give both at once - and AirDrop would be back on.
+
+`activelate.sh` tests four orderings against one target frequency. The target is
+the busiest 2.4 GHz channel from a scan (2412 MHz here), chosen so there is
+always traffic to read a radiotap frequency from and so the result can never be
+confused with 5180. Run twice, 15 s per phase, kernel 6.12.97_1:
+
+| ordering | active accepted | `iw` says | **actual freq** | frames |
+|---|---|---|---|---|
+| A plain, up, set freq | n/a | 2412 | **2412** | 1883 |
+| B `flags active` at create, up, set freq | yes | 2412 | **5180** | 13 |
+| C plain, up, set freq, **then** `set monitor active` | yes | 2412 | **5180** | 2 |
+| D `flags active` at create, set freq while **down**, then up | yes | 2412 | **5180** | 6 |
+
+Ordering makes no difference. The instant the vif is in active mode the radio is
+at 5180, whether it got there before tuning, after tuning, or while down. C is
+the decisive one: that vif was demonstrably sitting on 2412 and receiving, and
+switching it to active moved the radio to 5180 underneath a netdev that kept
+reporting 2412.
+
+Two incidental notes:
+
+- `iw dev <vif> set monitor active` on an up monitor vif returns **EBUSY (-16)**;
+  it only takes with the link down. The script cycles the link and does not
+  re-tune afterwards, which is what makes C a real test.
+- **Monitor flags cannot be read back at all.** `iw dev <vif> info` prints
+  type/wiphy/addr and nothing else, identically for a vif created with
+  `flags active` and a plain one. Any check that greps that output for "active"
+  reports `no` unconditionally - the first cut of this script did exactly that
+  and produced a wrong verdict line. The only observable is whether the kernel
+  *accepted* the request, so that is what the table records. This is a third face
+  of the same METHODOLOGY RULE: on this chip, ask the frames, not the tooling.
+
+### Verdict: AirDrop is not reachable on the MT7921
+
+Not "unlikely" - the constraint is now structural and reproduced. OWL requires
+`NL80211_MNTR_FLAG_ACTIVE` for unicast ACKs (`daemon/netutils.c:225`), active
+mode forces 5180 MHz by every available route, and the phone's channel is not
+ours to choose. §12's "not yet established either way" is resolved in the
+negative, and it no longer depends on catching the phone on ch36: even a perfect
+ch36 run could not produce a general AirDrop path, because the peer is free to
+sit on 6 or 149 and we could not follow it.
+
+What still stands, and is the actual result of this project: **AWDL sync works on
+the MT7921** (§9 - peer held 9.78 s, 266 action frames, radio observed following
+the peer's sequence), and the hop-latency measurement in §9 is the publishable
+part. Transfer needs a card with working active monitor - the AR9271
+(`ath9k_htc`). The §7 auth wall remains untested; nothing here touches it.
