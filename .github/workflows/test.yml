@@ -23,7 +23,7 @@ jobs:
     - name: Create build directory
       run: mkdir build
     - name: CMake
-      run: cd build && cmake ..
+      run: cd build && cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ..
     - name: make
       run: cd build && make
     - name: Run tests
