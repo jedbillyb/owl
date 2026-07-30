@@ -820,3 +820,77 @@ of local inspection settles it - only a live run does. The test is layer 2.5 of
 previously gave 100% loss and `from_peer=0` (§10). Bidirectional IP there is the
 proof; anything less and the ACK question is still open. Needs an iPhone with the
 share sheet open. The §7 auth wall remains untouched beyond that.
+
+
+## 15. 2026-07-31: AirDrop works on the built-in MT7921
+
+A photo sent from an iPhone arrived on the laptop over the built-in MT7921:
+`IMG_8276.JPG`, 4032x3024, 2.06 MB, extracted from the transfer intact. §7's
+auth wall - untested since the project started - was never reached, because the
+phone accepted us without it.
+
+### The ACK question, settled by letting the phone initiate
+
+§14 left one thing unproven: whether the firmware really ACKs in the pair
+configuration. `ping6` could not answer it - 100% loss is equally consistent
+with "no ACKs" and "iOS ignores pings from an unknown AWDL peer", and §10 read
+that ambiguous result as proof of the former.
+
+`airdrop.sh receive` settles it, because if the **phone** initiates then it must
+send unicast to us, and unicast only completes if we ACK:
+
+| run | packets from the peer |
+|---|---|
+| ping6, we initiate (§10, §14) | 0 |
+| receive mode, phone initiates | **481** |
+
+Those 481 included TCP HTTP POSTs to OpenDrop's server. TCP cannot progress
+without ACKs, so the chip is ACKing. **Active monitor works on the MT7921** in
+the pair configuration, and §10's "active monitor mode does not work on this
+chip" is withdrawn along with the dead-end verdicts built on it.
+
+The mt76 core does advertise `NL80211_FEATURE_ACTIVE_MONITOR` for every driver
+it supports (`mac80211.c:442`), and no mt76 driver reads `MNTR_FLAG` anywhere -
+that is true, and it is not evidence of anything. ACK generation is in hardware
+off the address filter; no per-driver flag handling is needed for it to work.
+
+### Three OpenDrop bugs stood between sync and a file
+
+Each surfaced only once the previous one was fixed, and none is a radio problem.
+All three are in `patches/opendrop-ios26-airdrop.patch`.
+
+1. `handle_discover`/`handle_ask` read `int(self.headers["Content-Length"])`.
+   iOS 26 sends both chunked with no Content-Length -> `TypeError` on None, and
+   the connection died before any reply. The phone's sheet showed nothing.
+2. `handle_upload` accepted only `application/x-cpio` and answered 406 to iOS
+   26's `application/x-dvzip` - after the user had tapped send. That 406 is what
+   the phone reports as "Failed".
+3. libarchive cannot parse dvzip. It is a run of length-prefixed blocks: 4-byte
+   big-endian header, bit 31 = payload is STORED, low 31 bits = payload length,
+   otherwise the payload is a zlib stream. Blocks decompress to 128 KiB each
+   except the last. The 2.06 MB transfer was 17 blocks consuming the file
+   exactly, yielding an ODC cpio ("070707") holding the photo.
+
+### The full working recipe
+
+```sh
+sudo iw phy phy0 interface add mon0 type monitor          # plain, FIRST
+sudo ip link set mon0 up
+sudo iw dev mon0 set freq <target>                        # mon0 owns the channel
+sudo iw phy phy0 interface add mon1 type monitor flags active   # alongside
+sudo ip link set mon1 up
+# PM off on both, then OWL on the ACTIVE vif:
+sudo ./build/daemon/owl -i mon1 -c <chan> -N -vv
+```
+
+or just `ACTIVE=1 ./airdrop.sh receive`, which does all of it.
+
+### Known rough edges
+
+- **Throughput is ~0.05 MB/s.** A 2 MB photo needs 40-60 s *after* the user taps.
+  `RECV_TIME` still defaults to 120 s, which cut one transfer off 370 bytes from
+  the end - the saved archive is then genuinely truncated, not mis-decoded. Raise
+  the default to ~300 s. This is the one fix identified but not applied.
+- Sending *to* the phone (`./airdrop.sh send`) is untested; only receive is proven.
+- The slow throughput is probably the §9 hop-latency finding showing up as
+  bandwidth - worth measuring against a fixed channel.

@@ -258,3 +258,27 @@ airdrop.sh now builds the pair under ACTIVE=1 and no longer skips the sweep.
 STILL UNPROVEN: that the firmware really ACKs like this. Flags can't be read
 back, so only a live run tells us - layer 2.5's ping6 to the peer link-local
 (100% loss, from_peer=0 under plain monitor). Needs the iPhone, share sheet open.
+
+## 2026-07-31 (later still): AIRDROP WORKS ON THE BUILT-IN CHIP
+Photo off an iPhone landed on the laptop: IMG_8276.JPG, 4032x3024, 2.06 MB.
+Never even reached the §7 auth wall - the phone accepted us.
+
+The ACK question was settled by letting the PHONE initiate. ping6 could never
+answer it (100% loss reads the same whether we don't ACK or iOS just ignores
+pings from strangers - and §10 took it as proof we don't ACK). In receive mode
+the phone sent us 481 packets including TCP POSTs, and TCP cannot progress
+without ACKs. So active monitor DOES work here, in the pair config.
+
+Then three OpenDrop bugs, each hidden behind the last, none of them radio:
+  1. Discover/Ask read Content-Length; iOS 26 sends them chunked -> TypeError.
+  2. Upload only accepted x-cpio; iOS 26 sends x-dvzip -> 406 = "Failed" on phone.
+  3. libarchive can't parse dvzip. It's length-prefixed blocks: 4-byte BE header,
+     bit 31 = stored, low 31 bits = length, else zlib. 128 KiB per block.
+All three in patches/opendrop-ios26-airdrop.patch (venv is gitignored; Void has
+no patch(1), use git apply).
+
+Received files go to ~/Downloads.
+
+LEFT UNDONE: RECV_TIME still defaults to 120s. Throughput is only ~0.05 MB/s so
+that truncated one transfer 370 bytes from the end. Bump it to ~300.
+Also untested: sending TO the phone.

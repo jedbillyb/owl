@@ -51,7 +51,13 @@ case "$CHAN" in
 esac
 PEER_WAIT=45          # how long to wait for an AWDL peer before giving up
 FIND_TIME=25          # how long to let opendrop scan
-WATCHDOG_TIMEOUT=420
+# Throughput over AWDL measured at ~0.05 MB/s, so a single photo needs ~40-60s
+# AFTER the user finds and taps this machine. 120s cut a 2 MB transfer off 370
+# bytes from the end - the archive is then genuinely truncated, not mis-decoded.
+RECV_TIME="${RECV_TIME:-300}"    # how long to advertise in receive mode
+RECV_DIR="${RECV_DIR:-$HOME/Downloads}"   # where received files are extracted
+# The watchdog has to outlast the whole run or it tears the card down mid-test.
+if [ "$MODE" = "receive" ]; then WATCHDOG_TIMEOUT=$((RECV_TIME + 420)); else WATCHDOG_TIMEOUT=420; fi
 MT76=/sys/kernel/debug/ieee80211/phy0/mt76
 OWL=/home/jed/owl/build/daemon/owl
 VENV=/home/jed/owl/.venv-opendrop/bin/opendrop
@@ -298,10 +304,14 @@ else
   sleep 2
   sudo pkill -x tcpdump 2>/dev/null || true
   sleep 1
+  # Count by tcpdump FILTER, not by grepping the text for the peer address.
+  # The old grep matched the peer address wherever it appeared, including as the
+  # DESTINATION of our own outbound pings, so it could not tell direction at all.
   TOT=$(sudo tcpdump -r "$OUT/awdl0.pcap" 2>/dev/null | wc -l)
-  FROMPEER=$(sudo tcpdump -r "$OUT/awdl0.pcap" 2>/dev/null | grep -c "$(echo $PEER6 | cut -d: -f1-4)" || true)
-  MDNS=$(sudo tcpdump -r "$OUT/awdl0.pcap" 2>/dev/null | grep -ci "mdns\|5353" || true)
-  echo "  packets on $AWDL: total=$TOT from_peer=$FROMPEER mdns=$MDNS"
+  FROMPEER=$(sudo tcpdump -r "$OUT/awdl0.pcap" "ip6 src $PEER6" 2>/dev/null | wc -l)
+  TOPEER=$(sudo tcpdump -r "$OUT/awdl0.pcap" "ip6 dst $PEER6" 2>/dev/null | wc -l)
+  MDNS=$(sudo tcpdump -r "$OUT/awdl0.pcap" "port 5353" 2>/dev/null | wc -l)
+  echo "  packets on $AWDL: total=$TOT to_peer=$TOPEER from_peer=$FROMPEER mdns=$MDNS"
   if [ "${TOT:-0}" = "0" ]; then
     echo "  ==> NOTHING traverses awdl0. AWDL syncs but carries no data."
     echo "      That is a data-path problem, not an AirDrop auth problem."
@@ -327,9 +337,41 @@ fi
 
 if [ "$MODE" = "receive" ]; then
   echo ""
-  echo "### layer 4: advertising as an AirDrop receiver (Ctrl-C to stop)"
-  echo "    Now look for this machine in the AirDrop sheet on the phone and send to it."
-  "$VENV" -i $AWDL receive 2>&1 | tee "$OUT/receive.log"
+  echo "### layer 4: advertising as an AirDrop receiver for ${RECV_TIME}s"
+  echo "    received files go to $RECV_DIR"
+  echo "    On the phone NOW: share sheet -> AirDrop -> tap this machine."
+  echo ""
+  # THE ACK DISCRIMINATOR. If the phone initiates, it must send unicast to us,
+  # and unicast only completes if we ACK. So any frame with the peer as SOURCE
+  # during this window proves active monitor really is ACKing - which ping6
+  # alone cannot show, since iOS may just ignore pings from an unknown peer.
+  sudo timeout $((RECV_TIME + 10)) tcpdump -i $AWDL -w "$OUT/receive.pcap" >/dev/null 2>&1 &
+  sleep 1
+  # opendrop extracts into its working directory, so run it from RECV_DIR
+  mkdir -p "$RECV_DIR"
+  ( cd "$RECV_DIR" && timeout $RECV_TIME "$VENV" -i $AWDL receive ) 2>&1 | tee "$OUT/receive.log"
+  sudo pkill -x tcpdump 2>/dev/null || true
+  sleep 1
+  R_TOT=$(sudo tcpdump -r "$OUT/receive.pcap" 2>/dev/null | wc -l)
+  if [ -n "${PEER6:-}" ]; then
+    R_FROM=$(sudo tcpdump -r "$OUT/receive.pcap" "ip6 src $PEER6" 2>/dev/null | wc -l)
+  else
+    R_FROM=0
+  fi
+  echo ""
+  echo "  during the receive window: total=$R_TOT from_peer=$R_FROM"
+  if [ "${R_FROM:-0}" -gt 0 ]; then
+    echo "  *** THE PHONE SENT US $R_FROM PACKETS - the path is TWO-WAY ***"
+    echo "  Unicast reached us, so the chip IS ACKing: active monitor works in"
+    echo "  the pair configuration. Anything failing past here is auth (§7),"
+    echo "  not the radio."
+  else
+    echo "  ==> still nothing from the phone, even when IT initiates."
+    echo "  Combined with the ping6 result this is the no-ACK reading: mt76"
+    echo "  advertises NL80211_FEATURE_ACTIVE_MONITOR for every driver in its"
+    echo "  core (mac80211.c:442) and no mt76 driver reads the flag, so nothing"
+    echo "  ever tells the MT7921 to ACK. Next stop is patching mt76 or the AR9271."
+  fi
 elif [ "$MODE" = "send" ]; then
   echo ""
   echo "### layer 4: attempting to send $SENDFILE to receiver index 0"
