@@ -114,3 +114,49 @@ Restore:
   ID now appears as a top-level `menuentry`, not nested under a submenu.
 - Not yet confirmed by an actual unattended reboot - do that next and check
   `uname -r` without touching the keyboard at boot.
+
+## 2026-07-30: monitor RX is dead on the MT7921 - the real blocker
+Tried to reproduce the sync against an iPhone (AirDrop sheet open = AWDL
+advertising). 1587 log lines, all TX, zero RX. Chased it down; full writeup in
+FINDINGS.md §8. Short version:
+
+- Radio DOES tune correctly. chansweep.sh: iw_mhz tracks the requested channel
+  exactly on 36/44/149/6. The 07-25 "radio is on 36 while claiming 149" theory
+  is dead - that was never the bug.
+- `iw set channel` is NOT the culprit. rxtest.sh A/B: zero frames with a channel
+  set, without one, and after re-entering monitor mode fresh.
+- Frames never leave the chip. rxcounters.sh: netdev rx_packets delta = 0 over
+  10s parked on ch2 where the AP was actively serving. Not a pcap/BPF issue.
+- Positive control FAILED: zero frames on the AP's own channel, and on 2.4GHz.
+  So it is not "nothing was on 149".
+- Probable cause: `iw phy phy0 info` lists monitor under supported modes but
+  monitor appears in NO valid interface combination. Monitor mode is nominal,
+  not functional: set monitor succeeds, netdev enters promiscuous mode, no
+  firmware error is logged, nothing is ever delivered.
+- Ruled out: kernel (pin verified 6.12.97_1), firmware (pkg from 2026-05-21,
+  predates the working result), suspend wedge (fresh boot), regulatory (zero on
+  2.4GHz too), userspace grabbers (all confirmed dead).
+- FINDINGS §2's "txpower stuck at 3 dBm" is RETRACTED - it reads 3.00 dBm in
+  managed mode too while passing traffic fine. Cosmetic mt76 quirk, ignore it.
+
+So sync-log.txt is real but is NOT reproducible today and we do not yet know why
+it once worked. 9bac866 still cannot be validated - that needs received frames.
+
+### Next, in order of promise
+1. Plug in the AR9271 USB adapter and run OWL on that. ath9k_htc monitor +
+   injection actually works. Costs the "can a fully-offloaded chip hop fast
+   enough" angle but unblocks validating 9bac866 today. (Not plugged in during
+   these tests - lsusb showed only the Foxconn BT device.)
+2. Try 6.12.90_1 or 6.12.11_1 (both still installed). Worth considering the
+   kernel that worked on 07-25 was one of these and got written down as 6.12.97
+   from memory late in a long session. One reboot each to test.
+3. Dig at mt7921 monitor support: does a separately-added vif
+   (`iw phy phy0 interface add mon0 type monitor`) behave differently from an
+   in-place type change? Check mt76 upstream for monitor fixes.
+
+### Test harness safety
+chansweep.sh / rxtest.sh / rxcounters.sh all use a bash trap PLUS a
+setsid-detached watchdog that restores networking even if the script is kill -9'd
+or hangs (a trap cannot survive SIGKILL). Watchdog was verified to fire after a
+hard kill before being relied on. Do not add a test here without that pattern -
+an earlier ad-hoc monitor-mode command with no trap did drop wifi.

@@ -5,6 +5,13 @@ Peer discovery, channel-sequence parsing, and master election are all confirmed.
 One open problem remains (peer ages out after ~4 s); it is characterised at the
 end of this document.
 
+> **CORRECTION 2026-07-30 — the above is NOT currently reproducible.** On a fresh
+> boot of the pinned 6.12.97 kernel, monitor-mode RX on this MT7921 delivers
+> **zero frames**, measured three independent ways (see §8). The sync result in
+> §5 did happen — `sync-log.txt` is a real transcript — but it cannot be
+> reproduced today, and §2's account of *why* 6.18 differs from 6.12.97 is partly
+> wrong. Read §8 before trusting §2 or §4.
+
 This document records what was done and what was observed. It is the basis for a
 writeup, not a tutorial.
 
@@ -41,6 +48,12 @@ makes every other part of the system look broken.
   beacons" — nothing at all reaches the pcap handle, in an RF environment
   saturated with 2.4 GHz and 5 GHz beacons.
 - TX power additionally reads stuck at 3 dBm.
+  **RETRACTED 2026-07-30:** this is not a 6.18 symptom. `txpower 3.00 dBm` is
+  reported on 6.12.97 too, in *managed* mode, while associated and passing
+  traffic normally, and it persists after an explicit
+  `iw dev wlp2s0 set txpower fixed 2000`. Meanwhile dmesg logs
+  `Limiting TX power to 30 (30 - 0) dBm`. So this is a cosmetic mt76 reporting
+  quirk with no diagnostic value. Ignore it.
 
 Because AWDL is a receive-driven protocol — OWL learns peers, their channel
 sequences, and their election metrics entirely from received action frames — a
@@ -242,3 +255,118 @@ document) and application-layer transfer are separate problems:
 So AirDrop interop is gated on authentication, not on the radio work. The sync
 result stands on its own: an open-source AWDL implementation reaching timing and
 election agreement with a live Apple device on a fully-offloaded MediaTek chip.
+
+## 8. 2026-07-30: monitor RX on the MT7921 delivers nothing, on the *pinned* kernel
+
+Attempting to re-run the §5 sync against an iPhone (AirDrop sheet open, so AWDL
+was actively advertising) produced 1587 log lines of pure TX and **zero received
+frames**. Investigating that produced the following, all on kernel 6.12.97_1 on
+a fresh boot with the regdomain explicitly set to NZ.
+
+### The radio tunes correctly; that was never the bug
+
+`chansweep.sh` requests channels 36/44/149/6 in turn and records both what `iw`
+claims and the radiotap frequency of arriving frames:
+
+```
+req_ch=36   iw_claims=36   iw_mhz=5180   frames=0
+req_ch=44   iw_claims=44   iw_mhz=5220   frames=0
+req_ch=149  iw_claims=149  iw_mhz=5745   frames=0
+req_ch=6    iw_claims=6    iw_mhz=2437   frames=0
+```
+
+`iw_mhz` tracks `req_ch` exactly in every case, so the 2026-07-25 note about the
+radio sitting on 5180 MHz while claiming 149 is **not** a channel-setting bug.
+Channel 36 here is a deliberate positive control - the local AP lives there - and
+it returned zero frames, which means the control failed and the problem is
+upstream of channel selection entirely.
+
+### `iw set channel` is not the culprit either
+
+`monitor-test.sh` (which reported beacons flooding in on 07-25) never sets a
+channel, whereas `hoptest.sh` and OWL both do. `rxtest.sh` A/B tests exactly
+that, in one session:
+
+```
+A_no_channel_set        iw_claims=6    frames=0
+B_after_set_ch36        iw_claims=36   frames=0
+C_fresh_no_channel_set  iw_claims=36   frames=0
+```
+
+RX is dead with and without a channel set, and dead again after tearing monitor
+mode down and re-entering it. Set-channel is exonerated.
+
+### The frames never leave the chip
+
+`rxcounters.sh` compares three independent counters over one 10 s monitor window,
+parked on channel 2 where the AP was actively serving traffic:
+
+| counter | result |
+|---|---|
+| mt76 hardware RX (debugfs) | debugfs not present on this build |
+| netdev `rx_packets` delta | **0** |
+| libpcap frames (tcpdump) | **0** |
+
+The netdev counter sat at 2,002,976 from normal managed-mode use and did not
+advance by a single packet. So this is not a pcap, BPF, or filter problem - the
+driver hands nothing up at all.
+
+### Probable cause: mt7921 monitor mode is nominal, not functional
+
+`iw phy phy0 info` lists `monitor` under *Supported interface modes*, but the
+valid interface combinations are:
+
+```
+* #{ managed, P2P-client } <= 2, #{ AP, P2P-GO } <= 1, total <= 2, #channels <= 2
+```
+
+**`monitor` appears in no valid combination.** That is consistent with everything
+observed: `iw dev wlp2s0 set monitor active` succeeds, the netdev genuinely
+enters promiscuous mode (dmesg confirms `entered promiscuous mode` on each
+attempt), no firmware error is ever logged, and not one frame is delivered.
+
+Ruled out while narrowing this down:
+- **Not a kernel regression from 6.18.** The pin is holding; `uname -r` is
+  6.12.97_1 (verified after the GRUB fix, see NOTES.md).
+- **Not a firmware update.** `linux-firmware-network-20260410_1`, installed
+  2026-05-21, predates the 07-25 working result.
+- **Not a suspend/resume wedge.** Fresh boot, no suspend cycle.
+- **Not regulatory.** Zero frames on 2.4 GHz ch 6 and ch 2, which no regdomain
+  restricts. Under the US rules the card was actually using, ch 149 is 30 dBm
+  and not DFS.
+- **Not userspace interference.** NetworkManager down, `wpa_supplicant` and
+  `dhcpcd` confirmed dead before each test.
+
+### What this means for the project
+
+The §5 sync result is real - `sync-log.txt` is a genuine transcript with a
+correctly parsed Apple channel sequence. But it is **not reproducible on this
+adapter today**, and the reason it once worked is not yet explained. Until
+monitor RX can be recovered, the follow-the-peer-sequence fix (`9bac866`) cannot
+be validated, because validating it requires receiving frames.
+
+Three candidate paths, in rough order of promise:
+
+1. **Try the AR9271 USB adapter.** `ath9k_htc` has genuinely solid monitor and
+   injection support, unlike a fully-offloaded part. It costs the "can a
+   fully-offloaded MediaTek chip be driven at AWDL hop rates" research angle,
+   but it would unblock validating `9bac866` immediately. The adapter was not
+   plugged in during these tests (`lsusb` showed only the Foxconn Bluetooth
+   device).
+2. **Try the other installed kernels.** 6.12.90_1 and 6.12.11_1 are both still
+   installed. It is worth considering that the kernel which actually worked on
+   07-25 was one of those and was recorded as 6.12.97 from memory late in a long
+   session. Cheap to test, one reboot each.
+3. **Dig into mt7921 monitor support directly.** The missing interface
+   combination is the thread to pull - check whether a separately-added monitor
+   vif (`iw phy phy0 interface add mon0 type monitor`) behaves differently from
+   an in-place type change, and check mt76 upstream for monitor-mode fixes.
+
+### Test harnesses added
+
+`chansweep.sh`, `rxtest.sh`, and `rxcounters.sh` all follow the same safety
+pattern: a bash `trap` on EXIT/INT/TERM **plus** an independent `setsid`-detached
+watchdog that restores networking even if the script is `kill -9`'d or hangs,
+which a trap alone cannot survive. The watchdog mechanism was verified to fire
+after a hard kill before being relied on. No test can leave the machine without
+wifi.
