@@ -132,6 +132,52 @@ echo "  PM off, $MON on $(iw dev $MON info 2>/dev/null | grep -oP 'channel \K[0-
   done ) > "$OUT/radio.log" &
 POLL_PID=$!
 
+# ---------- layer 0: find which channel the phone is actually on ----------
+# The phone's channel sequence drifts between runs (36-dominant and
+# 149-dominant were both observed on 2026-07-30), and OWL sits statically on
+# its master channel until it discovers a peer - so guessing wrong means never
+# hearing it. Sweep first, on raw AWDL frames, before committing OWL.
+# This also distinguishes "phone is silent" from "phone is elsewhere", which
+# guessing cannot.
+echo ""
+echo "### layer 0: locating the phone (AWDL BSSID 00:25:00:ff:94:73)"
+AWDL_BSSID="00:25:00:ff:94:73"
+BEST_CHAN=""; BEST_N=0; SAW_ANY=0
+for c in 36 149 44 6; do
+  case "$c" in 6) mhz=2437 ;; 36) mhz=5180 ;; 44) mhz=5220 ;; 149) mhz=5745 ;; esac
+  sudo iw dev $MON set freq $mhz 2>/dev/null
+  sleep 1
+  sudo rm -f "$OUT/scan-$c.pcap"
+  sudo timeout 7 tcpdump -i $MON -w "$OUT/scan-$c.pcap" -c 300 \
+       "wlan addr3 $AWDL_BSSID" >/dev/null 2>&1 &
+  sleep 5
+  sudo pkill -x tcpdump 2>/dev/null || true
+  sleep 1
+  n=$(sudo tcpdump -r "$OUT/scan-$c.pcap" 2>/dev/null | wc -l)
+  n=${n:-0}
+  printf '  ch %-4s AWDL frames: %s\n' "$c" "$n"
+  [ "$n" -gt 0 ] && SAW_ANY=1
+  if [ "$n" -gt "$BEST_N" ]; then BEST_N=$n; BEST_CHAN=$c; fi
+done
+
+if [ "$SAW_ANY" = "0" ]; then
+  echo ""
+  echo "  No AWDL frames on ANY channel. The phone is not advertising."
+  echo "  This is not a Linux-side problem - nothing to sync with."
+  echo "  On the phone, immediately before re-running:"
+  echo "    1. unlock it and keep the screen ON"
+  echo "    2. Settings > General > AirDrop > 'Everyone for 10 Minutes'"
+  echo "       (this EXPIRES - re-arm it each time)"
+  echo "    3. open the share sheet and leave it open"
+  exit 1
+fi
+
+echo "  --> strongest on channel $BEST_CHAN ($BEST_N frames); using it"
+CHAN=$BEST_CHAN
+case "$CHAN" in 6) CHAN_MHZ=2437 ;; 36) CHAN_MHZ=5180 ;; 44) CHAN_MHZ=5220 ;; 149) CHAN_MHZ=5745 ;; esac
+sudo iw dev $MON set freq $CHAN_MHZ 2>/dev/null
+sleep 1
+
 # -N because mon0 is already a monitor vif and up; OWL's own set-monitor-mode
 # would fail with EBUSY. We did that setup ourselves above.
 sudo stdbuf -oL "$OWL" -i $MON -c $CHAN -N -vv > "$OUT/owl.log" 2>&1 &
@@ -164,8 +210,11 @@ for i in $(seq $PEER_WAIT); do
   sleep 1
 done
 if [ "$FOUND" = "0" ]; then
-  echo "  no AWDL peer found in ${PEER_WAIT}s."
-  echo "  Reopen the AirDrop sheet on the phone and try again."
+  echo "  no AWDL peer found in ${PEER_WAIT}s,"
+  echo "  DESPITE $BEST_N AWDL frames being present on ch $CHAN during the scan."
+  echo "  So the phone IS transmitting but OWL is not adding it as a peer -"
+  echo "  that points at OWL's parsing/election, not at the radio."
+  echo "  Check $OUT/owl.log and the scan pcaps in $OUT/."
   exit 1
 fi
 echo "  peer found:"
