@@ -86,7 +86,10 @@ setsid nohup bash -c "sleep $WATCHDOG_TIMEOUT; $RESTORE_CMDS" >/dev/null 2>&1 &
 WATCHDOG_PID=$!
 echo "watchdog armed (pid $WATCHDOG_PID, fires in ${WATCHDOG_TIMEOUT}s)"
 
+RESTORED=0
 restore() {
+  [ "$RESTORED" = "1" ] && return 0
+  RESTORED=1
   echo ""
   echo "--- restoring ---"
   [ -n "${POLL_PID:-}" ] && kill "$POLL_PID" 2>/dev/null
@@ -169,6 +172,39 @@ echo "  peer found:"
 grep -E "add peer|changed channel sequence" "$OUT/owl.log" | tail -3 | sed 's/.*[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\} //' | sed 's/^/    /'
 echo "  IPv6 neighbours on $AWDL:"
 ip -6 neigh show dev $AWDL | sed 's/^/    /' || echo "    (none yet)"
+
+# ---------- layer 2.5: is there actually an IP data path? ----------
+# The neighbour table entry above only proves AWDL link-layer sync. It says
+# nothing about whether IPv6 packets actually traverse the link. If mDNS finds
+# nothing, the first thing to establish is whether ANY packet gets through.
+echo ""
+echo "### layer 2.5: IP reachability over $AWDL"
+PEER6=$(ip -6 neigh show dev $AWDL | awk '/^fe80:/{print $1; exit}')
+if [ -z "${PEER6:-}" ]; then
+  echo "  no link-local peer address in the neighbour table - cannot test"
+else
+  echo "  peer: $PEER6"
+  # capture while we ping, so we see whether replies come back at all
+  sudo timeout 14 tcpdump -i $AWDL -w "$OUT/awdl0.pcap" >/dev/null 2>&1 &
+  sleep 1
+  echo "  ping6 (5 attempts, 8s):"
+  timeout 12 ping6 -c 5 -W 2 -I $AWDL "$PEER6" 2>&1 | tail -4 | sed "s/^/    /"
+  sleep 2
+  sudo pkill -x tcpdump 2>/dev/null || true
+  sleep 1
+  TOT=$(sudo tcpdump -r "$OUT/awdl0.pcap" 2>/dev/null | wc -l)
+  FROMPEER=$(sudo tcpdump -r "$OUT/awdl0.pcap" 2>/dev/null | grep -c "$(echo $PEER6 | cut -d: -f1-4)" || true)
+  MDNS=$(sudo tcpdump -r "$OUT/awdl0.pcap" 2>/dev/null | grep -ci "mdns\|5353" || true)
+  echo "  packets on $AWDL: total=$TOT from_peer=$FROMPEER mdns=$MDNS"
+  if [ "${TOT:-0}" = "0" ]; then
+    echo "  ==> NOTHING traverses awdl0. AWDL syncs but carries no data."
+    echo "      That is a data-path problem, not an AirDrop auth problem."
+  elif [ "${FROMPEER:-0}" = "0" ]; then
+    echo "  ==> we transmit but the phone never answers. One-way path."
+  else
+    echo "  ==> bidirectional IP works. Any failure past here is service/auth level."
+  fi
+fi
 
 # ---------- layers 3 + 4: OpenDrop ----------
 echo ""
