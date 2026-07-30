@@ -479,3 +479,75 @@ firmware channel-switch latency eats most of the availability window on the
 away-channel. Enough to hold a peer; probably not enough to carry data reliably
 in those slots. Worth measuring properly - per-hop switch latency from the
 radio.log timestamps is the obvious next step.
+
+## 10. 2026-07-30: AirDrop is not reachable on the MT7921, and the reason is ACKs
+
+Sync works (§9). Data transfer does not, and the wall is **not** Apple's
+authentication - we never got far enough to meet it.
+
+### The measurement: a one-way path
+
+With OWL synced to an iPhone, a peer in the table and an IPv6 neighbour
+installed on `awdl0`:
+
+```
+ping6 -I awdl0 fe80::4024:66ff:fe35:430c
+  5 packets transmitted, 0 received, 100% packet loss
+packets on awdl0: total=8  from_peer=0  mdns=2
+```
+
+Our mDNS queries went out. Nothing ever came back. So the repeated
+"No AirDrop service discovered" was never an auth refusal - no packet from the
+phone ever reached us.
+
+### The cause: active monitor mode does not work on this chip
+
+AWDL data frames are unicast, so they must be ACKed. That is what *active*
+monitor mode is for, and the OWL README lists it as a hard requirement. The
+MT7921 claims to support it:
+
+```
+iw phy phy0 info -> "Device supports active monitor (which will ACK incoming frames)"
+```
+
+It does not, in any usable sense. `activetest.sh`, parked on channel 3 where the
+local AP is, counting all frames over 8 s:
+
+| mon0 created | frames |
+|---|---|
+| plain | 140 |
+| **`flags active`** | **6** |
+| plain again | 144 |
+
+Active monitor destroys roughly **96%** of reception. This is the same
+nominal-but-not-functional pattern as §8's monitor mode and §9's channel tuning:
+the capability is advertised, the call succeeds, no error is logged, and the
+hardware quietly fails to do it.
+
+### The consequence: a genuine dead end on this adapter
+
+The two options are mutually exclusive, and neither permits AirDrop:
+
+| mode | RX | ACKs | outcome |
+|---|---|---|---|
+| plain monitor | works | no | one-way path; AirDrop cannot complete |
+| active monitor | ~96% lost | yes | nothing arrives to ACK anyway |
+
+So **AirDrop over the built-in MT7921 is blocked by the adapter**, not by Apple.
+The harnesses are therefore set to create `mon0` **plain**: reception is what
+makes the sync result in §9 possible, and that result is the valuable part.
+
+This retroactively vindicates the README's hardware requirement. It recommends
+an AR9280 (ath9k) precisely because a fully-offloaded chip cannot be trusted to
+ACK on a monitor vif. The AR9271 (`ath9k_htc`) on hand is the path to an actual
+transfer.
+
+### What is and is not blocked
+
+- **Link-layer sync: works, and is the novel result.** Unaffected by any of this.
+- **`9bac866` validation: stands.** It only needed RX, which plain monitor gives.
+- **AirDrop transfer on MT7921: blocked at the link layer.** Needs a card with
+  working active monitor.
+- **AirDrop auth (§7): still untested.** It may well also block, but that is now
+  an *unverified* claim - the ACK problem stopped us first, and any future
+  attempt should re-measure rather than assume.

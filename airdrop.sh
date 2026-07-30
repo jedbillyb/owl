@@ -116,26 +116,18 @@ sudo pkill -x wpa_supplicant 2>/dev/null; sudo pkill -x dhcpcd 2>/dev/null; slee
 sudo iw reg set NZ
 sudo ip link set $IFACE down
 sudo iw dev $MON del 2>/dev/null
-# `flags active` is ESSENTIAL, not cosmetic. Active monitor makes the card ACK
-# received frames. AWDL data frames are unicast, so without ACKs the phone
-# retransmits up to 7 times, gives up, and we get a ONE-WAY path: our mDNS
-# queries go out, nothing ever comes back. That was measured on 2026-07-30
-# (ping6 100% loss, from_peer=0) before this flag was added. The chip supports
-# it - `iw phy phy0 info` reports "Device supports active monitor (which will
-# ACK incoming frames)".
-sudo iw phy phy0 interface add $MON type monitor flags active \
+# NOTE: created PLAIN, deliberately - do NOT add `flags active`.
+# mt7921 advertises "Device supports active monitor (which will ACK incoming
+# frames)" but activetest.sh (2026-07-30) measured, on ch3 with the AP present:
+#   plain=140 frames, flags active=6 frames, plain again=144 frames.
+# Active monitor destroys ~96% of RX on this chip. So the choice is:
+#   plain  -> RX works, no ACKs, ONE-WAY path (AirDrop cannot complete)
+#   active -> ACKs, but RX crippled, so nothing arrives to ACK anyway
+# Neither allows AirDrop on the built-in MT7921. Plain is chosen because
+# reception is what makes the AWDL sync research result possible at all.
+# For actual AirDrop, use a card with working active monitor (ath9k / AR9271).
+sudo iw phy phy0 interface add $MON type monitor \
   || { echo "FAILED to create $MON"; exit 1; }
-# NOTE: `iw dev <dev> info` does NOT report monitor flags, so grepping its
-# output for "active" can never succeed - an earlier version of this script did
-# that and printed a bogus warning on every run. Instead, explicitly (re)apply
-# active monitor and trust the driver's exit status, which is a real signal.
-sudo ip link set $MON down 2>/dev/null
-if sudo iw dev $MON set monitor active 2>/dev/null; then
-  echo "  active monitor: accepted by driver"
-else
-  echo "  WARNING: driver REJECTED active monitor - expect a one-way path,"
-  echo "           because unicast AWDL frames will never be ACKed."
-fi
 sudo ip link set $MON up
 sudo ip link set $MON up
 sudo sh -c "echo 0 > $MT76/runtime-pm"
