@@ -95,3 +95,22 @@ Restore:
 - UNRESOLVED: is the radio actually on 36, or is mt76 mislabelling the radiotap
   frequency field? Sweep 36/44/149 and see whether reported freq tracks. That
   test is written up in the chat log, run it first thing.
+
+## 2026-07-30: kernel pin fix attempt #2 - GRUB doesn't recurse into submenus for default=<id>
+- Attempt #1 (hardcode GRUB_DEFAULT to the entry ID, disable GRUB_SAVEDEFAULT)
+  still didn't work - had to manually enter "Advanced options" and pick
+  6.12.97 by hand after reboot.
+- Real root cause: the 6.12.97 entry lives inside the "Advanced options"
+  submenu, and GRUB's `default="<id>"` resolution only searches the
+  TOP-LEVEL menu list, not recursively into submenus. So the hardcoded ID
+  from attempt #1 never matched anything at boot and GRUB silently fell
+  back to the first top-level entry (`simple`, tracks newest kernel).
+- Fix: `GRUB_DISABLE_SUBMENU=true` in /etc/default/grub, then
+  `sudo grub-mkconfig -o /boot/grub/grub.cfg`. This flattens every kernel
+  into its own top-level `menuentry` (no more "Advanced options" submenu),
+  so the same `gnulinux-6.12.97_1-advanced-...` ID is now directly
+  reachable by GRUB's default matching. Verified in the regenerated
+  grub.cfg: `set default="gnulinux-6.12.97_1-advanced-..."` and that same
+  ID now appears as a top-level `menuentry`, not nested under a submenu.
+- Not yet confirmed by an actual unattended reboot - do that next and check
+  `uname -r` without touching the keyboard at boot.
