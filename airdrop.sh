@@ -244,11 +244,20 @@ for i in $(seq $PEER_WAIT); do
   sleep 1
 done
 if [ "$FOUND" = "0" ]; then
-  echo "  no AWDL peer found in ${PEER_WAIT}s,"
-  echo "  DESPITE $BEST_N AWDL frames being present on ch $CHAN during the scan."
-  echo "  So the phone IS transmitting but OWL is not adding it as a peer -"
-  echo "  that points at OWL's parsing/election, not at the radio."
-  echo "  Check $OUT/owl.log and the scan pcaps in $OUT/."
+  echo "  no AWDL peer found in ${PEER_WAIT}s."
+  if [ "${BEST_N:-n/a}" = "n/a" ]; then
+    # ACTIVE mode skips the sweep, so we genuinely do not know whether the
+    # phone was transmitting. Do not claim that it was.
+    echo "  The channel sweep was SKIPPED (active monitor cannot retune), so"
+    echo "  whether the phone was advertising at all is UNKNOWN for this run."
+    echo "  Run ./awdltest.sh to compare plain vs active reception of AWDL"
+    echo "  frames back-to-back, which does separate the two."
+  else
+    echo "  DESPITE $BEST_N AWDL frames present on ch $CHAN during the scan."
+    echo "  So the phone IS transmitting but OWL is not adding it as a peer -"
+    echo "  that points at OWL parsing/election, not the radio."
+  fi
+  echo "  Logs: $OUT/"
   exit 1
 fi
 echo "  peer found:"
