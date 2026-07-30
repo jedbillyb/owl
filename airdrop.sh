@@ -34,7 +34,8 @@ MODE="${1:-find}"
 SENDFILE="${2:-}"
 
 IFACE=wlp2s0
-MON=mon0
+MON=mon0              # plain vif: owns and steers the channel
+MONA=mon1             # active vif (ACTIVE=1 only): ACKs, rides mon0's channel
 AWDL=awdl0
 # Channel. Default 36: an iPhone was observed on 2026-07-30 advertising
 # 36,36,149,0,0,0,0,36,6,36,149,36,0,0,0,36 - six slots on 36 against two on
@@ -78,6 +79,8 @@ sudo mountpoint -q /sys/kernel/debug || sudo mount -t debugfs none /sys/kernel/d
 
 RESTORE_CMDS='
   sudo pkill -x owl 2>/dev/null || true
+  sudo ip link set '"$MONA"' down 2>/dev/null || true
+  sudo iw dev '"$MONA"' del 2>/dev/null || true
   sudo ip link set '"$MON"' down 2>/dev/null || true
   sudo iw dev '"$MON"' del 2>/dev/null || true
   sudo sh -c "echo 1 > '"$MT76"'/runtime-pm" 2>/dev/null || true
@@ -120,34 +123,57 @@ sudo sv down NetworkManager
 sudo pkill -x wpa_supplicant 2>/dev/null; sudo pkill -x dhcpcd 2>/dev/null; sleep 1
 sudo iw reg set NZ
 sudo ip link set $IFACE down
+sudo iw dev $MONA del 2>/dev/null
 sudo iw dev $MON del 2>/dev/null
-# Monitor vif mode. Two measured trade-offs (activetest2.sh, 2026-07-30, with
-# the ACTUAL radiotap frequency verified - not iw's claim, which lies here):
+# Monitor vif setup. THE PAIR (activelate2.sh/activelate3.sh, 2026-07-31).
 #
-#   plain : retunes correctly. 186 frames/8s on 5180. NO ACKs, so unicast AWDL
-#           data is never acknowledged -> one-way path -> AirDrop cannot complete.
-#   active: ACKs, and DOES still receive (35 frames/8s on 5180, ~81% less than
-#           plain). But it CANNOT retune - it is pinned to 5180 MHz and iw does
-#           not even report a channel for it.
+# A vif created with `flags active` on its own is stuck at 5180 MHz forever, by
+# every ordering tried - see FINDINGS §13/§14. But an active vif created
+# ALONGSIDE a plain vif that already owns the channel comes up on that channel,
+# at full reception, and the two share one channel context: retuning either one
+# moves both. Measured, radiotap-verified, twice:
 #
-# 5180 MHz is channel 36, which the phone favours heavily, so ACTIVE=1 is worth
-# trying despite the lack of channel control: no hopping, but possibly a
-# two-way path. That is the only route to AirDrop on this chip.
-#   ACTIVE=1 ./airdrop.sh        # ACKs, locked to ch36, no hopping
-#   ./airdrop.sh                 # default: plain, hops, one-way
+#   plain alone           2437 (667 frames)
+#   active alongside      2437 (710)   <- no RX penalty
+#   retune plain -> 2412  active follows to 2412, and back again
+#   retune ACTIVE -> 2412 works too, so OWL can steer its own interface
+#
+# So `flags active` never cost us reception; being dumped on an empty 5180 did.
+# That removes both obstacles at once: ACKs for unicast AWDL data AND the
+# channel hopping needed to follow the peer's sequence.
+#
+#   ACTIVE=1 ./airdrop.sh        # the pair: ACKs + hopping. Use this for transfer.
+#   ./airdrop.sh                 # default: plain only, hops, one-way (no ACKs)
+#
+# NOT YET CONFIRMED: that the firmware really does ACK in this configuration.
+# Monitor flags cannot be read back (`iw dev <vif> info` prints nothing about
+# them), so the only proof is layer 2.5 below reporting bidirectional IP.
 if [ "${ACTIVE:-0}" = "1" ]; then
-  echo "  mode: ACTIVE monitor (ACKs; pinned to 5180/ch36; no hopping)"
-  sudo iw phy phy0 interface add $MON type monitor flags active \
-    || { echo "FAILED to create $MON"; exit 1; }
+  echo "  mode: PAIR - plain $MON steers the channel, active $MONA ACKs"
 else
-  echo "  mode: plain monitor (retunes and hops, but one-way - no ACKs)"
-  sudo iw phy phy0 interface add $MON type monitor \
-    || { echo "FAILED to create $MON"; exit 1; }
+  echo "  mode: plain monitor only (hops, but one-way - no ACKs)"
 fi
+sudo iw phy phy0 interface add $MON type monitor \
+  || { echo "FAILED to create $MON"; exit 1; }
 sudo ip link set $MON up
 sudo sh -c "echo 0 > $MT76/runtime-pm"
 sudo sh -c "echo 0 > $MT76/deep-sleep"
 sudo iw dev $MON set freq $CHAN_MHZ
+OWL_IF=$MON
+if [ "${ACTIVE:-0}" = "1" ]; then
+  # order matters: the plain vif must exist and be tuned FIRST
+  if sudo iw phy phy0 interface add $MONA type monitor flags active 2>/dev/null \
+     && sudo ip link set $MONA up 2>/dev/null; then
+    OWL_IF=$MONA
+    sudo sh -c "echo 0 > $MT76/runtime-pm"
+    sudo sh -c "echo 0 > $MT76/deep-sleep"
+    echo "  active vif $MONA up alongside $MON - OWL will run on $MONA"
+  else
+    echo "  WARNING: could not bring up the active vif; falling back to $MON."
+    echo "  Without ACKs the path is one-way and a transfer cannot complete."
+    sudo iw dev $MONA del 2>/dev/null
+  fi
+fi
 sleep 2
 echo "  PM off, $MON on $(iw dev $MON info 2>/dev/null | grep -oP 'channel \K[0-9]+') (requested $CHAN / $CHAN_MHZ MHz)"
 
@@ -167,12 +193,8 @@ POLL_PID=$!
 # This also distinguishes "phone is silent" from "phone is elsewhere", which
 # guessing cannot.
 echo ""
-if [ "${ACTIVE:-0}" = "1" ]; then
-  echo "### layer 0: SKIPPED - active monitor cannot retune, forcing ch36"
-  CHAN=36; CHAN_MHZ=5180
-  sudo iw dev $MON set freq $CHAN_MHZ 2>/dev/null
-  BEST_N="n/a"
-else
+# The sweep now runs in BOTH modes: the active vif rides mon0's channel, so
+# steering mon0 steers the pair. Nothing has to be forced to ch36 any more.
 echo "### layer 0: locating the phone (AWDL BSSID 00:25:00:ff:94:73)"
 AWDL_BSSID="00:25:00:ff:94:73"
 BEST_CHAN=""; BEST_N=0; SAW_ANY=0
@@ -210,11 +232,11 @@ CHAN=$BEST_CHAN
 case "$CHAN" in 6) CHAN_MHZ=2437 ;; 36) CHAN_MHZ=5180 ;; 44) CHAN_MHZ=5220 ;; 149) CHAN_MHZ=5745 ;; esac
 sudo iw dev $MON set freq $CHAN_MHZ 2>/dev/null
 sleep 1
-fi
 
-# -N because mon0 is already a monitor vif and up; OWL's own set-monitor-mode
-# would fail with EBUSY. We did that setup ourselves above.
-sudo stdbuf -oL "$OWL" -i $MON -c $CHAN -N -vv > "$OUT/owl.log" 2>&1 &
+# -N because the vif is already a monitor and up; OWL's own set-monitor-mode
+# would fail with EBUSY. We did that setup ourselves above. In ACTIVE mode
+# OWL_IF is the active vif, so OWL's frames go out on the vif that ACKs.
+sudo stdbuf -oL "$OWL" -i $OWL_IF -c $CHAN -N -vv > "$OUT/owl.log" 2>&1 &
 sleep 4
 
 if ! grep -q "Host device" "$OUT/owl.log"; then
@@ -245,18 +267,10 @@ for i in $(seq $PEER_WAIT); do
 done
 if [ "$FOUND" = "0" ]; then
   echo "  no AWDL peer found in ${PEER_WAIT}s."
-  if [ "${BEST_N:-n/a}" = "n/a" ]; then
-    # ACTIVE mode skips the sweep, so we genuinely do not know whether the
-    # phone was transmitting. Do not claim that it was.
-    echo "  The channel sweep was SKIPPED (active monitor cannot retune), so"
-    echo "  whether the phone was advertising at all is UNKNOWN for this run."
-    echo "  Run ./awdltest.sh to compare plain vs active reception of AWDL"
-    echo "  frames back-to-back, which does separate the two."
-  else
-    echo "  DESPITE $BEST_N AWDL frames present on ch $CHAN during the scan."
-    echo "  So the phone IS transmitting but OWL is not adding it as a peer -"
-    echo "  that points at OWL parsing/election, not the radio."
-  fi
+  echo "  DESPITE $BEST_N AWDL frames present on ch $CHAN during the scan."
+  echo "  So the phone IS transmitting but OWL is not adding it as a peer -"
+  echo "  that points at OWL parsing/election, not the radio."
+  echo "  (The sweep now runs in both modes, so this is never ambiguous.)"
   echo "  Logs: $OUT/"
   exit 1
 fi

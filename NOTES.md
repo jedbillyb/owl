@@ -238,3 +238,23 @@ is not ours to pick. Sync still works and remains the real result.
 3. Write up the §9 hop-latency result - away-channel dwell 45 ms/visit but hops
    fire ~14x less often than the 16-slot sequence dictates. That is the
    publishable answer to FINDINGS §6.
+
+## 2026-07-31 (later): the pair - active monitor CAN leave 5180
+Same day, retracting the entry above. Every test that produced "active mode means
+5180" had the active vif alone on the phy. Give it a companion and it behaves:
+
+  plain mon0, tuned to 2437, THEN add mon1 with flags active alongside
+  -> mon1 comes up on 2437 with 710 frames (plain alone: 667). No RX penalty.
+
+They share one channel context, so retuning either moves both, both directions -
+and retuning mon1 itself works, so OWL needs no patch, just -i mon1 -N.
+
+So the "active monitor retains only 2.5-19% of RX" number was the busy-vs-quiet
+channel confound AGAIN, third time, after the methodology rule was written down.
+Active mode never cost reception; sitting alone on an empty 5180 did.
+
+airdrop.sh now builds the pair under ACTIVE=1 and no longer skips the sweep.
+
+STILL UNPROVEN: that the firmware really ACKs like this. Flags can't be read
+back, so only a live run tells us - layer 2.5's ping6 to the peer link-local
+(100% loss, from_peer=0 under plain monitor). Needs the iPhone, share sheet open.

@@ -738,7 +738,12 @@ Two incidental notes:
   *accepted* the request, so that is what the table records. This is a third face
   of the same METHODOLOGY RULE: on this chip, ask the frames, not the tooling.
 
-### Verdict: AirDrop is not reachable on the MT7921
+### Verdict: AirDrop is not reachable on the MT7921  — **RETRACTED, see §14**
+
+> Superseded within the hour by `activelate2.sh`. The premise below - that active
+> mode implies 5180 by every available route - was false: no phase here had tried
+> creating the active vif *alongside* a plain vif that already owns the channel.
+> Everything from "Not 'unlikely'" to the end of this section is withdrawn.
 
 Not "unlikely" - the constraint is now structural and reproduced. OWL requires
 `NL80211_MNTR_FLAG_ACTIVE` for unicast ACKs (`daemon/netutils.c:225`), active
@@ -753,3 +758,65 @@ the MT7921** (§9 - peer held 9.78 s, 266 action frames, radio observed followin
 the peer's sequence), and the hop-latency measurement in §9 is the publishable
 part. Transfer needs a card with working active monitor - the AR9271
 (`ath9k_htc`). The §7 auth wall remains untested; nothing here touches it.
+
+
+## 14. 2026-07-31: the way out - an active vif that RIDES a plain vif's channel
+
+§13 concluded AirDrop was unreachable because active mode always meant 5180 MHz.
+Every phase that produced that conclusion, across every script since §10, had one
+thing in common: the active vif was **the only vif on the phy**. Nobody had tried
+giving it a companion.
+
+`activelate2.sh`, target 2437 MHz (busiest from a scan), radiotap-verified:
+
+| phase | setup | actual freq | frames |
+|---|---|---|---|
+| A | plain alone, tuned while up | 2437 | 667 |
+| E | plain tuned, **deleted**, then active vif created | 5180 | 17 |
+| F | active vif created **alongside** the tuned plain vif | **2437** | **710** |
+
+E rules out the simple explanation (the channel is not remembered across the
+vif's lifetime). F is the result: an active monitor vif that comes up on the
+channel a plain vif is already holding, **with no reception penalty at all** -
+710 frames against the plain baseline's 667.
+
+That reframes every RX number since §10. `flags active` was never costing us
+reception; being dumped alone on an empty 5180 MHz was. The "active monitor
+retains only 2.5-19% of plain reception" figure from §12/§12a measured a quiet
+channel against a busy one one more time - in a different disguise, and after the
+METHODOLOGY RULE was already written down.
+
+### It hops, too, and OWL can steer it itself
+
+`activelate3.sh`, two runs (2412/2462 and 2437/2412), capturing on the **active**
+vif throughout:
+
+| step | action | active vif lands on |
+|---|---|---|
+| 1 | pair brought up on f1 | f1 (736 frames) |
+| 2 | retune the **plain** vif to f2 | **f2** (1239) |
+| 3 | retune the plain vif back to f1 | **f1** (288) |
+| 4 | retune the **active** vif itself to f2 | **f2** (938) |
+
+The two vifs share a single channel context: moving either moves both, in both
+directions. Step 4 matters for integration - OWL retunes its own interface, so it
+can simply be pointed at the active vif and needs no patch.
+
+### Where this leaves AirDrop
+
+Both blockers are gone at the radio level. OWL can have ACKs (`flags active`, for
+the unicast AWDL data frames `daemon/netutils.c:225` demands) **and** follow the
+peer's channel sequence, at full reception, on the built-in MT7921. §13's verdict
+is withdrawn; §12's "not established either way" is the honest status again.
+
+`airdrop.sh` now builds the pair when `ACTIVE=1`: plain `mon0` created and tuned
+first, active `mon1` added alongside, OWL run on `mon1`. The channel sweep is no
+longer skipped in active mode, since the pair retunes freely.
+
+**Still unproven, and it is the whole question:** that the firmware actually
+emits ACKs in this configuration. Monitor flags cannot be read back, so no amount
+of local inspection settles it - only a live run does. The test is layer 2.5 of
+`airdrop.sh`: `ping6` to the peer's link-local address, where plain monitor
+previously gave 100% loss and `from_peer=0` (§10). Bidirectional IP there is the
+proof; anything less and the ACK question is still open. Needs an iPhone with the
+share sheet open. The §7 auth wall remains untouched beyond that.
