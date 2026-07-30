@@ -36,8 +36,18 @@ SENDFILE="${2:-}"
 IFACE=wlp2s0
 MON=mon0
 AWDL=awdl0
-CHAN=149
-CHAN_MHZ=5745
+# Channel. Default 36: an iPhone was observed on 2026-07-30 advertising
+# 36,36,149,0,0,0,0,36,6,36,149,36,0,0,0,36 - six slots on 36 against two on
+# 149, so 149 is its MINORITY channel and sitting there misses most of its
+# availability windows. Override with e.g. CHAN=149 ./airdrop.sh
+CHAN="${CHAN:-36}"
+case "$CHAN" in
+  6)   CHAN_MHZ=2437 ;;
+  36)  CHAN_MHZ=5180 ;;
+  44)  CHAN_MHZ=5220 ;;
+  149) CHAN_MHZ=5745 ;;
+  *)   echo "REFUSING: CHAN must be 6, 36, 44 or 149 (got $CHAN)"; exit 1 ;;
+esac
 PEER_WAIT=45          # how long to wait for an AWDL peer before giving up
 FIND_TIME=25          # how long to let opendrop scan
 WATCHDOG_TIMEOUT=420
@@ -79,11 +89,21 @@ echo "watchdog armed (pid $WATCHDOG_PID, fires in ${WATCHDOG_TIMEOUT}s)"
 restore() {
   echo ""
   echo "--- restoring ---"
+  [ -n "${POLL_PID:-}" ] && kill "$POLL_PID" 2>/dev/null
+  if [ -f "$OUT/radio.log" ]; then
+    echo "  channels the radio actually visited:"
+    awk '{print $2}' "$OUT/radio.log" | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /'
+  fi
   eval "$RESTORE_CMDS"
   kill "$WATCHDOG_PID" 2>/dev/null || true
   echo "restored. logs in $OUT"
 }
-trap restore EXIT INT TERM
+# INT/TERM must restore AND exit. With a bare `trap restore EXIT INT TERM`, a
+# Ctrl-C during the opendrop pipeline ran restore (tearing the card down) and
+# then let the rest of the script run on regardless - which is exactly what
+# happened on the first real run.
+trap 'restore; exit 130' INT TERM
+trap restore EXIT
 
 # ---------- layer 1: AWDL link ----------
 echo ""
@@ -99,7 +119,15 @@ sudo sh -c "echo 0 > $MT76/runtime-pm"
 sudo sh -c "echo 0 > $MT76/deep-sleep"
 sudo iw dev $MON set freq $CHAN_MHZ
 sleep 2
-echo "  PM off, $MON on $(iw dev $MON info 2>/dev/null | grep -oP 'channel \K[0-9]+')"
+echo "  PM off, $MON on $(iw dev $MON info 2>/dev/null | grep -oP 'channel \K[0-9]+') (requested $CHAN / $CHAN_MHZ MHz)"
+
+# independent radio poller - confirms OWL really hops, without trusting its logs
+( while :; do
+    printf '%s %s\n' "$(date +%s.%N)" \
+      "$(iw dev $MON info 2>/dev/null | grep -oP 'channel \K[0-9]+' || echo NA)"
+    sleep 0.05
+  done ) > "$OUT/radio.log" &
+POLL_PID=$!
 
 # -N because mon0 is already a monitor vif and up; OWL's own set-monitor-mode
 # would fail with EBUSY. We did that setup ourselves above.

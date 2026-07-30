@@ -49,6 +49,10 @@ struct awdl_chan {
 
 #define CHAN_NULL (struct awdl_chan) { { { 0, 0x00 } } }
 #define CHAN_OPCLASS_6 (struct awdl_chan) { { { 6, 0x51 } } }
+/* 36 is a social channel Apple devices actually favour - an iPhone was observed
+ * advertising 36 in 6 of 16 slots against only 2 on 149. Same 5 GHz opclass as
+ * 44 and 149. */
+#define CHAN_OPCLASS_36 (struct awdl_chan) { { { 36, 0x80 } } }
 #define CHAN_OPCLASS_44 (struct awdl_chan) { { { 44, 0x80 } } }
 #define CHAN_OPCLASS_149 (struct awdl_chan) { { { 149, 0x80 } } }
 

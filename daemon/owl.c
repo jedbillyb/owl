@@ -171,6 +171,9 @@ int main(int argc, char *argv[]) {
 		case 6:
 			chan = CHAN_OPCLASS_6;
 			break;
+		case 36:
+			chan = CHAN_OPCLASS_36;
+			break;
 		case 44:
 			chan = CHAN_OPCLASS_44;
 			break;
@@ -178,7 +181,7 @@ int main(int argc, char *argv[]) {
 			chan = CHAN_OPCLASS_149;
 			break;
 		default:
-			log_error("Unsupported channel %d (use 6, 44, or 149)", chan_num);
+			log_error("Unsupported channel %d (use 6, 36, 44, or 149)", chan_num);
 			return EXIT_FAILURE;
 	}
 
