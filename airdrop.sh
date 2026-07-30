@@ -124,8 +124,10 @@ sudo iw dev $MON del 2>/dev/null
 # NOTE: created PLAIN, deliberately - do NOT add `flags active`.
 # mt7921 advertises "Device supports active monitor (which will ACK incoming
 # frames)" but activetest.sh (2026-07-30) measured, on ch3 with the AP present:
-#   plain=140 frames, flags active=6 frames, plain again=144 frames.
-# Active monitor destroys ~96% of RX on this chip. So the choice is:
+#   6.12.97: plain=140, flags active=6,  plain again=144
+#   6.18.33: plain=2000, flags active=9,  plain again=1399
+# Active monitor destroys ~96-99% of RX on BOTH kernels, so this is firmware,
+# not a driver bug, and no kernel will fix it. So the choice is:
 #   plain  -> RX works, no ACKs, ONE-WAY path (AirDrop cannot complete)
 #   active -> ACKs, but RX crippled, so nothing arrives to ACK anyway
 # Neither allows AirDrop on the built-in MT7921. Plain is chosen because
@@ -133,7 +135,6 @@ sudo iw dev $MON del 2>/dev/null
 # For actual AirDrop, use a card with working active monitor (ath9k / AR9271).
 sudo iw phy phy0 interface add $MON type monitor \
   || { echo "FAILED to create $MON"; exit 1; }
-sudo ip link set $MON up
 sudo ip link set $MON up
 sudo sh -c "echo 0 > $MT76/runtime-pm"
 sudo sh -c "echo 0 > $MT76/deep-sleep"

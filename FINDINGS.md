@@ -551,3 +551,52 @@ transfer.
 - **AirDrop auth (§7): still untested.** It may well also block, but that is now
   an *unverified* claim - the ACK problem stopped us first, and any future
   attempt should re-measure rather than assume.
+
+## 11. 2026-07-30: confirmed across two kernels - and the 6.18 story was backwards
+
+`activetest.sh` was re-run on **6.18.33_1** to see whether any kernel has a
+working mt76 active-monitor path. Channel 3, AP present, all frames counted over
+8 s:
+
+| kernel | plain | `flags active` | plain again |
+|---|---|---|---|
+| 6.12.97_1 | 140 | **6** | 144 |
+| 6.18.33_1 | 2000 (hit capture cap) | **9** | 1399 |
+
+### Conclusion 1: active monitor is broken in firmware, not the driver
+
+Two independent kernels, ~5 years of mt76 development apart, produce the same
+verdict: enabling active monitor costs 96-99% of reception. This is no longer a
+"maybe a newer driver fixes it" situation. **AirDrop over the built-in MT7921 is
+not achievable**, and further kernel-hunting is not worth the time.
+
+This is a hard requirement failure, not a tuning problem: OWL's
+`set_monitor_mode()` explicitly requests `NL80211_MNTR_FLAG_ACTIVE`
+(`daemon/netutils.c:225`), because AWDL data frames are unicast and must be
+ACKed. There is no software path around it.
+
+### Conclusion 2: the kernel pin was wrong, and backwards
+
+§2 claimed 6.18 broke mt76 monitor RX and pinned the machine to 6.12.97. That is
+now **fully retracted**. 6.18.33 does not merely work - it captures roughly **10x
+more frames** than 6.12.97 under identical conditions. The original comparison
+was confounded by the runtime-PM bug (§8): both kernels delivered nothing with PM
+on, and the difference attributed to the kernel was noise.
+
+So the GRUB pin, and the two-attempt fight to make it stick, addressed a problem
+that did not exist. The pin mechanism is correct and documented in NOTES.md, but
+6.12.97 is now the *worse* kernel of the two for this work.
+
+**Not yet done:** a full OWL sync run on 6.18.33. Only the RX-path test has been
+repeated there. Validate with `./hoptest2.sh` on 6.18 before dropping the pin -
+better RX does not automatically mean the rest of the stack behaves.
+
+### Where this leaves the project
+
+| goal | status |
+|---|---|
+| AWDL link-layer sync | **works** - the novel result, receive-only, unaffected |
+| `9bac866` follow-peer-sequence fix | **validated** (§9) |
+| Hop-latency characterisation | **measured** (§9) |
+| AirDrop transfer on MT7921 | **impossible** - firmware cannot ACK on a monitor vif |
+| AirDrop transfer at all | needs ath9k / AR9271; auth (§7) still untested beyond that |
