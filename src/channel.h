@@ -72,17 +72,29 @@ int awdl_chan_encoding_size(enum awdl_chan_encoding);
  * throughput story.
  */
 enum awdl_chanseq_strategy {
-	/* Copy the elected sync master's sequence verbatim. Upstream behaviour, and
-	 * the ~45 kB/s baseline. Correct only because the master's phase is ours by
-	 * construction, so it silently breaks for any non-master peer. */
+	/* Copy the elected sync master's sequence verbatim. Upstream behaviour, the
+	 * ~45 kB/s baseline, and the DEFAULT: it is the only strategy an iPhone has
+	 * ever been observed to answer (§25). Correct only because the master's
+	 * phase is ours by construction, so it silently breaks for any non-master
+	 * peer -- which is what ROTATE is for. */
 	AWDL_CHANSEQ_VERBATIM = 0,
 	/* Copy a peer's sequence but rotate it into our own clock phase first.
 	 * Needed for any peer that is not the elected master. */
 	AWDL_CHANSEQ_ROTATE = 1,
 	/* Ignore slot structure entirely and sit on the peer's dominant social
-	 * channel in all 16 slots. Phase-invariant by construction, so it cannot
-	 * suffer the section 17 bug, and it is present for every window the peer
-	 * offers rather than a subset. Default. */
+	 * channel in all 16 slots.
+	 *
+	 * DOES NOT WORK against iOS 26 -- an iPhone stops answering us entirely, and
+	 * this is measured, not suspected (§25): same phone, same setup, same binary,
+	 * verbatim 60% ping loss against pin 100%, twice, with pin's frames provably
+	 * leaving the radio and its channel provably unchanged. What is left is the
+	 * sequence itself: a peer that claims one channel in all 16 slots, with no
+	 * empty slots and no infra channel in slot 0, looks like nothing any Apple
+	 * device emits, and the phone appears to reject it.
+	 *
+	 * Kept because it is the natural experiment for "how much slot structure
+	 * does Apple actually require", which is the open question behind widening
+	 * our duty cycle. Not a default, and not a thing to reach for casually. */
 	AWDL_CHANSEQ_PIN = 2,
 };
 
@@ -108,14 +120,6 @@ struct awdl_channel_state {
 	int rot_delta;         /* currently applied */
 	int rot_delta_pending; /* seen once, not yet confirmed */
 	uint8_t rot_valid;
-	/* Re-issue set_channel() this often even when the slot has not changed, 0 to
-	 * never. This exists to separate two explanations of the §24 TX failure that
-	 * the bisect data cannot tell apart, because PIN removed channel switching
-	 * and changed the advertised sequence in the same commit. It is a control
-	 * arm, not a fix: only a run against a phone can say whether the driver
-	 * needs the poke. See docs/FINDINGS.md §24 in the airdrop-mt7921 repo. */
-	uint64_t retune_us;
-	uint64_t last_retune;
 };
 
 void awdl_chanseq_init(struct awdl_chan *seq);

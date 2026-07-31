@@ -330,24 +330,7 @@ void awdl_switch_channel(struct ev_loop *loop, ev_timer *timer, int revents) {
 			         chan_num_new, slot, chan_num_old);
 		} else {
 			awdl_state->channel.current = chan_new;
-			awdl_state->channel.last_retune = now;
 		}
-	} else if (awdl_state->channel.retune_us && chan_num_old &&
-	           now - awdl_state->channel.last_retune >= awdl_state->channel.retune_us) {
-		/* Re-request the channel we are already on.
-		 *
-		 * The §23 bisect found unicast TX working in the one build that switched
-		 * channels 3.5 times a second and failing in all three that switched
-		 * once and then never again -- while the frames themselves left OWL in
-		 * every build, and RX was unaffected throughout. PIN caused that, but it
-		 * changed two things at once: the radio stopped being retuned, and the
-		 * sequence we advertise stopped looking like anything an Apple device
-		 * emits. This arm holds the second fixed and restores the first, so a
-		 * single run against a phone can say which one matters. */
-		log_debug("retune to channel %d (keepalive)", chan_num_old);
-		if (!state->io.wlan_is_file)
-			set_channel(state->io.wlan_ifindex, chan_num_old);
-		awdl_state->channel.last_retune = now;
 	}
 
 	next_aw = awdl_sync_next_aw_us(now, &awdl_state->sync);

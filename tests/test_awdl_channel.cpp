@@ -178,7 +178,7 @@ static int overlap(const struct awdl_chan *ours, const struct awdl_chan *theirs)
 }
 
 TEST(awdl_channel, pin_never_loses_windows_to_phase_error) {
-	/* The claim behind making PIN the default, as a test rather than an
+	/* The claim that once made PIN the default, as a test rather than an
 	 * assertion in a commit message.
 	 *
 	 * Copying a peer's sequence is only correct when our clock phase matches
@@ -186,6 +186,13 @@ TEST(awdl_channel, pin_never_loses_windows_to_phase_error) {
 	 * master whose phase has drifted -- verbatim adoption loses windows, and
 	 * that is precisely the 6x regression of FINDINGS 17. Pinning is a constant
 	 * sequence, so it overlaps every window the peer offers at every phase.
+	 *
+	 * All still true, and all beside the point: an iPhone will not answer a peer
+	 * advertising a constant sequence at all (FINDINGS 25), so the windows PIN
+	 * wins on paper are ones nobody transmits in. Kept because the arithmetic is
+	 * what any future widening of our duty cycle has to beat, and because it is
+	 * a standing reminder that a model can be correct and still lose to what the
+	 * other device is willing to talk to.
 	 */
 	const uint8_t *captured[] = {IPHONE_IDLE, IPHONE_BUSY, IPHONE_PEAK};
 	struct awdl_chan peer[AWDL_CHANSEQ_LENGTH];
