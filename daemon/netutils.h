@@ -46,7 +46,19 @@ int set_monitor_mode(int ifindex);
 
 int is_channel_available(int ifindex, int channel, bool *is_available);
 
+/**
+ * @brief Request a channel switch. Does NOT wait for the kernel to confirm it.
+ *
+ * Returns 0 once the request is on the wire. A channel the kernel rejects is
+ * therefore not reported here -- see set_channel_drain().
+ */
 int set_channel(int ifindex, int channel);
+
+/** @brief fd to poll for set_channel() replies, or -1 if the platform has none. */
+int set_channel_fd(void);
+
+/** @brief Collect pending set_channel() replies. Call when set_channel_fd() is readable. */
+void set_channel_drain(void);
 
 int link_up(int ifindex);
 

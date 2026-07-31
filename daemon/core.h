@@ -30,7 +30,7 @@
 struct ev_state {
 	struct ev_loop *loop;
 	ev_timer mif_timer, psf_timer, tx_timer, tx_mcast_timer, chan_timer, peer_timer;
-	ev_io read_wlan, read_host;
+	ev_io read_wlan, read_host, read_chan_nl;
 	ev_signal stats;
 };
 
@@ -53,6 +53,8 @@ void awdl_schedule(struct ev_loop *loop, struct daemon_state *state);
 void wlan_device_ready(struct ev_loop *loop, ev_io *handle, int revents);
 
 void host_device_ready(struct ev_loop *loop, ev_io *handle, int revents);
+
+void chan_nl_ready(struct ev_loop *loop, ev_io *handle, int revents);
 
 void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint8_t *buf);
 
