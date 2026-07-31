@@ -91,6 +91,7 @@ int main(int argc, char *argv[]) {
 	int log_level = LOG_INFO;
 	int filter_rssi = 1;
 	int no_monitor_mode = 0;
+	enum awdl_chanseq_strategy strategy = AWDL_CHANSEQ_PIN;
 
 	char wlan[PATH_MAX] = "";
 	char host[IFNAMSIZ] = DEFAULT_AWDL_DEVICE;
@@ -99,8 +100,24 @@ int main(int argc, char *argv[]) {
 
 	struct daemon_state state;
 
-	while ((c = getopt(argc, argv, "Dc:dvi:h:a:t:fN")) != -1) {
+	while ((c = getopt(argc, argv, "Dc:dvi:h:a:t:fNS:")) != -1) {
 		switch (c) {
+			case 'S':
+				/* How to derive our channel sequence from a peer's. Exposed so a
+				 * single test session can A/B all three against the same phone --
+				 * the only way any of this gets settled. See channel.h. */
+				if (!strcmp(optarg, "pin"))
+					strategy = AWDL_CHANSEQ_PIN;
+				else if (!strcmp(optarg, "rotate"))
+					strategy = AWDL_CHANSEQ_ROTATE;
+				else if (!strcmp(optarg, "verbatim"))
+					strategy = AWDL_CHANSEQ_VERBATIM;
+				else {
+					log_error("Unknown channel sequence strategy '%s' "
+					          "(use pin, rotate, or verbatim)", optarg);
+					return EXIT_FAILURE;
+				}
+				break;
 			case 'D':
 				daemon = 1;
 				break;
@@ -197,6 +214,10 @@ int main(int argc, char *argv[]) {
 		return EXIT_FAILURE;
 	}
 	state.awdl_state.filter_rssi = filter_rssi;
+	state.awdl_state.channel.strategy = strategy;
+	log_info("channel sequence strategy: %s",
+	         strategy == AWDL_CHANSEQ_PIN ? "pin" :
+	         strategy == AWDL_CHANSEQ_ROTATE ? "rotate" : "verbatim");
 
 	if (state.io.wlan_ifindex)
 		log_info("WLAN device: %s (addr %s)", state.io.wlan_ifname, ether_ntoa(&state.io.if_ether_addr));

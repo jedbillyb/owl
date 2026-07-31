@@ -53,6 +53,40 @@ void awdl_chanseq_init_static(struct awdl_chan *seq, const struct awdl_chan *cha
 	}
 }
 
+void awdl_chanseq_rotate(struct awdl_chan *dst, const struct awdl_chan *src, int delta) {
+	delta %= AWDL_CHANSEQ_LENGTH;
+	if (delta < 0)
+		delta += AWDL_CHANSEQ_LENGTH;
+	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++)
+		dst[i] = src[(i + delta) % AWDL_CHANSEQ_LENGTH];
+}
+
+uint8_t awdl_chanseq_dominant_chan(const struct awdl_chan *seq, enum awdl_chan_encoding enc, uint8_t prefer) {
+	int count[256] = {0};
+	uint8_t best = 0;
+
+	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++) {
+		uint8_t c = awdl_chan_num(seq[i], enc);
+		if (c)
+			count[c]++;
+	}
+	if (prefer && count[prefer])
+		return prefer; /* already sharing the operator's channel: never move */
+	for (int i = 1; i < 256; i++) {
+		if (count[i] > count[best])
+			best = (uint8_t) i;
+	}
+	return best;
+}
+
+int awdl_chanseq_count_chan(const struct awdl_chan *seq, enum awdl_chan_encoding enc, uint8_t chan) {
+	int n = 0;
+	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++)
+		if (awdl_chan_num(seq[i], enc) == chan)
+			n++;
+	return n;
+}
+
 uint8_t awdl_chan_num(struct awdl_chan chan, enum awdl_chan_encoding enc) {
 	switch (enc) {
 		case AWDL_CHAN_ENC_SIMPLE:

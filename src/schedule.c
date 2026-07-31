@@ -32,7 +32,7 @@ bool awdl_same_channel_as_peer(const struct awdl_state *state, uint64_t now, con
 	int own_chan, peer_chan;
 
 	own_slot = awdl_sync_current_eaw(now, &state->sync) % AWDL_CHANSEQ_LENGTH;
-	peer_slot = awdl_sync_current_eaw(now + peer->sync_offset, &state->sync) % AWDL_CHANSEQ_LENGTH;
+	peer_slot = awdl_sync_current_eaw(awdl_peer_time(now, peer), &state->sync) % AWDL_CHANSEQ_LENGTH;
 
 	own_chan = awdl_chan_num(state->channel.sequence[own_slot], state->channel.enc);
 	peer_chan = awdl_chan_num(peer->sequence[peer_slot], state->channel.enc);

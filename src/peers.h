@@ -44,7 +44,18 @@ struct awdl_peer {
 	 * verbatim, so they are only decodable with this encoding -- decoding
 	 * them with the local channel.enc silently yields wrong channels. */
 	enum awdl_chan_encoding sequence_enc;
-	uint64_t sync_offset;
+	/* Signed microsecond correction from our availability-window phase to this
+	 * peer's, so that awdl_sync_current_eaw(now + sync_offset, &state->sync)
+	 * yields the slot the *peer* believes it is in. Positive = peer is ahead.
+	 *
+	 * Upstream declared this field, read it in awdl_same_channel_as_peer(), and
+	 * never assigned it -- it sat at 0 for every peer forever, so every phase
+	 * correction in the codebase silently did nothing. It is filled in by
+	 * awdl_handle_sync_params_tlv() now. Signed, because a peer behind us needs
+	 * a negative correction and unsigned wraparound here is far too easy to get
+	 * subtly wrong. */
+	int64_t sync_offset;
+	uint8_t has_sync_offset : 1;
 	char name[HOST_NAME_LENGTH_MAX + 1]; /* space for trailing zero */
 	char country_code[2 + 1];
 	struct ether_addr infra_addr;

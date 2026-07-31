@@ -36,13 +36,27 @@ int awdl_handle_sync_params_tlv(struct awdl_peer *src, const struct buf *val, st
 	uint16_t time_to_next_aw_master;
 	int64_t sync_err_tu;
 
+	/* Read the announced phase for EVERY peer, not just the master. Our own
+	 * clock only ever tracks the master (below), but knowing how far each other
+	 * peer's availability windows sit from ours is what makes it possible to
+	 * reason about a non-master's channel sequence at all -- see
+	 * awdl_same_channel_as_peer() and the chanseq rotation in core.c, both of
+	 * which read sync_offset and, until now, always got 0. */
+	READ_LE16(val, 1, &time_to_next_aw_master);
+	READ_LE16(val, 29, &aw_counter_master);
+
+	/* awdl_sync_error_tu() is just "peer's announced phase minus ours", which is
+	 * exactly the correction we want; it is not master-specific. Converted with
+	 * an explicit signed multiply rather than ieee80211_tu_to_usec(), which
+	 * takes unsigned long and would round a negative offset through wraparound. */
+	src->sync_offset = (int64_t) 1024 *
+	                   awdl_sync_error_tu(now, time_to_next_aw_master, aw_counter_master, &state->sync);
+	src->has_sync_offset = 1;
+
 	if (!awdl_election_is_sync_master(&state->election, &src->addr))
 		return RX_IGNORE; /* ignore sync params from nodes that are not our master */
 
 	/* TODO synchronization could be more accurate */
-
-	READ_LE16(val, 1, &time_to_next_aw_master);
-	READ_LE16(val, 29, &aw_counter_master);
 
 	state->sync.meas_total++;
 	sync_err_tu = awdl_sync_error_tu(now, time_to_next_aw_master, aw_counter_master, &state->sync);

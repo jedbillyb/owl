@@ -335,42 +335,138 @@ static void awdl_neighbor_remove(struct awdl_peer *p, void *_io_state) {
 }
 
 /*
- * Adopt the channel sequence of whichever peer won the election as our sync
- * master, so that we are on-channel during its availability windows. Reverts
- * to our own static sequence when we are our own sync master again (e.g. the
- * master aged out of the peer table).
+ * Pick the peer whose advertised channel sequence should drive ours: the
+ * elected sync master if it is in the peer table and has sent us a sequence.
+ *
+ * Kept deliberately simple. An earlier version preferred "the peer that most
+ * recently sent us data" instead, which flapped between the phone and a
+ * bystander at the 1 Hz tick and made throughput 6x worse (FINDINGS 17). Under
+ * PIN the question mostly stops mattering anyway, because every Apple device in
+ * the room names the same social channel and so maps to the same pin.
+ */
+static struct awdl_peer *awdl_chanseq_source(struct awdl_state *awdl) {
+	struct awdl_peer *master;
+
+	if (awdl_election_is_sync_master(&awdl->election, &awdl->self_address))
+		return NULL;
+	if (awdl_peer_get(awdl->peers.peers, &awdl->election.sync_addr, &master) < 0)
+		return NULL; /* elected master is not in the peer table */
+	if (!master->has_sequence)
+		return NULL; /* no chanseq TLV seen from it yet; keep what we have */
+	return master;
+}
+
+/*
+ * Derive our own channel sequence from a peer's, according to the configured
+ * strategy, so that we are on-channel during that peer's availability windows.
+ * Reverts to our own static sequence when we are our own sync master again
+ * (e.g. the master aged out of the peer table).
  *
  * The peer's sequence is stored as raw TLV bytes, so its encoding must be
  * adopted along with it -- decoding those bytes with a different encoding
  * yields plausible-looking but wrong channel numbers.
  */
-static void awdl_adopt_sync_master_chanseq(struct daemon_state *state) {
+static void awdl_adopt_chanseq(struct daemon_state *state) {
 	struct awdl_state *awdl = &state->awdl_state;
-	struct awdl_peer *master;
+	struct awdl_peer *src;
+	struct awdl_chan seq[AWDL_CHANSEQ_LENGTH];
+	enum awdl_chan_encoding enc;
+	uint64_t now = clock_time_us();
 
-	if (awdl_election_is_sync_master(&awdl->election, &awdl->self_address)) {
+	src = awdl_chanseq_source(awdl);
+
+	if (!src) {
 		if (awdl->channel.sequence_from_peer) {
 			log_info("no sync master, reverting to static channel sequence");
 			awdl_chanseq_init_static(awdl->channel.sequence, &awdl->channel.master);
 			awdl->channel.enc = AWDL_CHAN_ENC_OPCLASS;
 			awdl->channel.sequence_from_peer = 0;
+			awdl->channel.pinned_chan = 0;
+			memset(&awdl->channel.seq_src, 0, sizeof(awdl->channel.seq_src));
 		}
 		return;
 	}
 
-	if (awdl_peer_get(awdl->peers.peers, &awdl->election.sync_addr, &master) < 0)
-		return; /* elected master is not in the peer table */
+	switch (awdl->channel.strategy) {
+		case AWDL_CHANSEQ_PIN: {
+			/* Sit on the peer's dominant social channel in every slot. We have no
+			 * infra association to service on the monitor vif, so there is nothing
+			 * to gain by ever leaving it -- and everything to lose, because an
+			 * iPhone widens its own sequence from 2 slots to as many as 12 during a
+			 * transfer and we want to be present for all of them without waiting
+			 * for a 1 Hz tick to notice the change. Being on one channel in all 16
+			 * slots is also phase-invariant, so the FINDINGS 17 failure (right
+			 * channels, wrong times) cannot recur here by construction. */
+			uint8_t want = awdl_chanseq_dominant_chan(src->sequence, src->sequence_enc,
+			                                          awdl_chan_num(awdl->channel.master,
+			                                                        AWDL_CHAN_ENC_OPCLASS));
+			struct awdl_chan chan;
 
-	if (!master->has_sequence)
-		return; /* no chanseq TLV seen from it yet; keep what we have */
+			if (!want)
+				return; /* peer advertised nothing usable; keep what we have */
+			if (awdl->channel.pinned_chan == want)
+				return; /* already pinned there -- no log spam, no rewrite */
 
-	if (awdl->channel.enc != master->sequence_enc ||
-	    memcmp(awdl->channel.sequence, master->sequence, sizeof(master->sequence))) {
-		awdl->channel.enc = master->sequence_enc;
-		memcpy(awdl->channel.sequence, master->sequence, sizeof(master->sequence));
+			chan = (struct awdl_chan) {{{want, want > 14 ? 0x80 : 0x51}}};
+			awdl_chanseq_init_static(seq, &chan);
+			enc = AWDL_CHAN_ENC_OPCLASS;
+			awdl->channel.pinned_chan = want;
+			log_info("pinning channel %d in all slots (dominant channel of %s (%s))",
+			         want, ether_ntoa(&src->addr), src->name);
+			break;
+		}
+		case AWDL_CHANSEQ_ROTATE: {
+			/* Right channels at the right times: the peer's slot array is written
+			 * in the peer's availability-window phase, but awdl_switch_channel()
+			 * indexes our sequence in *ours*. Rotating by the difference puts the
+			 * peer's slots where our clock will actually look for them.
+			 *
+			 * This is the correct form of the fix that FINDINGS 17 retracted. Note
+			 * it is a no-op whenever the source is the elected master, since our
+			 * phase is defined by that peer and the delta is then zero -- which is
+			 * exactly why upstream never needed it. */
+			int delta = ((int) awdl_sync_current_eaw(awdl_peer_time(now, src), &awdl->sync) -
+			             (int) awdl_sync_current_eaw(now, &awdl->sync)) % AWDL_CHANSEQ_LENGTH;
+
+			if (delta < 0)
+				delta += AWDL_CHANSEQ_LENGTH;
+
+			/* Hysteresis: require two consecutive ticks to agree before moving.
+			 * Without it a peer whose phase sits near a window boundary makes the
+			 * delta oscillate between two neighbouring values, rewriting the
+			 * sequence every second -- the same flapping that made the FINDINGS 17
+			 * attempt worse, arriving by a different route. */
+			if (!awdl->channel.rot_valid) {
+				awdl->channel.rot_delta = delta;
+				awdl->channel.rot_valid = 1;
+			} else if (delta != awdl->channel.rot_delta) {
+				if (delta == awdl->channel.rot_delta_pending) {
+					log_debug("rotation delta %d -> %d (confirmed)", awdl->channel.rot_delta, delta);
+					awdl->channel.rot_delta = delta;
+				} else {
+					awdl->channel.rot_delta_pending = delta;
+					return; /* unconfirmed: leave the sequence alone this tick */
+				}
+			}
+			awdl_chanseq_rotate(seq, src->sequence, awdl->channel.rot_delta);
+			enc = src->sequence_enc;
+			break;
+		}
+		case AWDL_CHANSEQ_VERBATIM:
+		default:
+			memcpy(seq, src->sequence, sizeof(seq));
+			enc = src->sequence_enc;
+			break;
+	}
+
+	if (awdl->channel.enc != enc || memcmp(awdl->channel.sequence, seq, sizeof(seq))) {
+		awdl->channel.enc = enc;
+		memcpy(awdl->channel.sequence, seq, sizeof(seq));
 		awdl->channel.sequence_from_peer = 1;
-		log_info("following channel sequence of sync master %s (%s), enc %d",
-		         ether_ntoa(&master->addr), master->name, master->sequence_enc);
+		awdl->channel.seq_src = src->addr;
+		if (awdl->channel.strategy != AWDL_CHANSEQ_PIN)
+			log_info("following channel sequence of sync master %s (%s), enc %d",
+			         ether_ntoa(&src->addr), src->name, enc);
 	}
 }
 
@@ -389,7 +485,7 @@ void awdl_clean_peers(struct ev_loop *loop, ev_timer *timer, int revents) {
 	/* TODO for now run election immediately after clean up; might consider seperate timer for this */
 	awdl_election_run(&state->awdl_state.election, &state->awdl_state.peers);
 
-	awdl_adopt_sync_master_chanseq(state);
+	awdl_adopt_chanseq(state);
 
 	ev_timer_again(loop, timer);
 }

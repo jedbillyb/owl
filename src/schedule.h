@@ -33,6 +33,20 @@ double usec_to_sec(uint64_t usec);
 uint64_t sec_to_usec(double sec);
 
 /**
+ * @brief Translate a local timestamp into {@code peer}'s availability-window phase.
+ *
+ * sync_offset is signed and may be negative (peer behind us), so it cannot just
+ * be added to an unsigned timestamp at the call site. Clamps at 0 rather than
+ * wrapping if a peer somehow reports a phase further behind than the epoch.
+ */
+static inline uint64_t awdl_peer_time(uint64_t now, const struct awdl_peer *peer) {
+	int64_t off = peer->has_sync_offset ? peer->sync_offset : 0;
+	if (off < 0 && (uint64_t) -off > now)
+		return 0;
+	return (uint64_t) ((int64_t) now + off);
+}
+
+/**
  * @brief Determine whether we are on the same non-zero channel as {@code peer}.
  * @param state our state
  * @param peer the other peer

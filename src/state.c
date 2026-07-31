@@ -59,6 +59,12 @@ void awdl_init_state(struct awdl_state *state, const char *hostname, const struc
 	//awdl_chanseq_init(state->channel.sequence);
 	awdl_chanseq_init_static(state->channel.sequence, &state->channel.master);
 	state->channel.sequence_from_peer = 0;
+	state->channel.strategy = AWDL_CHANSEQ_PIN;
+	memset(&state->channel.seq_src, 0, sizeof(state->channel.seq_src));
+	state->channel.pinned_chan = 0;
+	state->channel.rot_delta = 0;
+	state->channel.rot_delta_pending = 0;
+	state->channel.rot_valid = 0;
 
 	awdl_election_state_init(&state->election, self);
 

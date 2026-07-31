@@ -268,6 +268,26 @@ static int io_state_init_wlan_try_savefile(struct io_state *state) {
 	state->wlan_is_file = 1;
 	state->wlan_ifindex = 0;
 
+	/* A savefile has no MAC address to read, so if_ether_addr would stay all
+	 * zeroes -- and open_tun() then fails with "unable to set HW address",
+	 * because an all-zero address is not assignable. That made replaying a
+	 * capture impossible even though the rest of the file path works fine.
+	 * Synthesise a locally-administered address instead (bit 1 of the first
+	 * octet set, bit 0 clear = unicast). Randomised so that two replays do not
+	 * collide if they are ever run side by side. */
+	{
+		int rnd = open("/dev/urandom", O_RDONLY);
+		if (rnd < 0 || read(rnd, &state->if_ether_addr, sizeof(state->if_ether_addr)) !=
+		               (ssize_t) sizeof(state->if_ether_addr)) {
+			if (rnd >= 0)
+				close(rnd);
+			log_error("savefile: could not generate a local MAC address");
+			return -1;
+		}
+		close(rnd);
+	}
+	state->if_ether_addr.ether_addr_octet[0] = (state->if_ether_addr.ether_addr_octet[0] & 0xfc) | 0x02;
+
 	return 0;
 }
 
