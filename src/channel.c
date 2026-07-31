@@ -19,6 +19,7 @@
 
 #include "channel.h"
 #include "ieee80211.h"
+#include <string.h>
 
 void awdl_chanseq_init(struct awdl_chan *seq) {
 	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++, seq++) {
@@ -59,6 +60,40 @@ void awdl_chanseq_rotate(struct awdl_chan *dst, const struct awdl_chan *src, int
 		delta += AWDL_CHANSEQ_LENGTH;
 	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++)
 		dst[i] = src[(i + delta) % AWDL_CHANSEQ_LENGTH];
+}
+
+int awdl_chanseq_widen(struct awdl_chan *dst, const struct awdl_chan *src,
+                       enum awdl_chan_encoding enc, int max_fill) {
+	uint8_t want = awdl_chanseq_dominant_chan(src, enc, 0);
+	struct awdl_chan fill = CHAN_NULL;
+	int filled = 0;
+
+	memcpy(dst, src, AWDL_CHANSEQ_LENGTH * sizeof(*dst));
+	if (!want || max_fill <= 0)
+		return 0;
+
+	/* Reuse the peer's OWN bytes for the channel rather than constructing a
+	 * {chan, opclass} pair ourselves. §25 leaves open exactly which part of a
+	 * sequence Apple validates, so the fewer bytes we invent, the fewer ways a
+	 * negative result can mean something other than "too wide". */
+	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++) {
+		if (awdl_chan_num(src[i], enc) == want) {
+			fill = src[i];
+			break;
+		}
+	}
+
+	/* Slot 0 is left exactly as the peer wrote it. Every captured Apple sequence
+	 * puts a non-social channel there -- the device's infra channel -- and it is
+	 * one of the two things a pinned sequence destroyed. Holding it fixed keeps
+	 * this a test of width alone. */
+	for (int i = 1; i < AWDL_CHANSEQ_LENGTH && filled < max_fill; i++) {
+		if (!awdl_chan_num(dst[i], enc)) {
+			dst[i] = fill;
+			filled++;
+		}
+	}
+	return filled;
 }
 
 uint8_t awdl_chanseq_dominant_chan(const struct awdl_chan *seq, enum awdl_chan_encoding enc, uint8_t prefer) {

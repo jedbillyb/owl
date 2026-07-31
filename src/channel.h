@@ -96,6 +96,16 @@ enum awdl_chanseq_strategy {
 	 * does Apple actually require", which is the open question behind widening
 	 * our duty cycle. Not a default, and not a thing to reach for casually. */
 	AWDL_CHANSEQ_PIN = 2,
+	/* The peer's own sequence with up to N of its empty slots filled in with the
+	 * peer's dominant channel, slot 0 left exactly as the peer wrote it.
+	 *
+	 * §25 established the two extremes: the peer's sequence verbatim is answered,
+	 * one channel in all 16 slots is not. This walks between them, so the width
+	 * at which an iPhone stops answering can be measured rather than guessed --
+	 * and every slot we add that the phone still accepts is duty cycle we get
+	 * back (§21). Nothing is invented: the fill value is copied from the peer's
+	 * own bytes. */
+	AWDL_CHANSEQ_WIDEN = 3,
 };
 
 struct awdl_channel_state {
@@ -120,6 +130,8 @@ struct awdl_channel_state {
 	int rot_delta;         /* currently applied */
 	int rot_delta_pending; /* seen once, not yet confirmed */
 	uint8_t rot_valid;
+	/* WIDEN: how many of the peer's empty slots to fill. */
+	int widen_max;
 };
 
 void awdl_chanseq_init(struct awdl_chan *seq);
@@ -144,6 +156,16 @@ void awdl_chanseq_rotate(struct awdl_chan *dst, const struct awdl_chan *src, int
  * @return the channel number, or 0 if the sequence names no channel at all
  */
 uint8_t awdl_chanseq_dominant_chan(const struct awdl_chan *seq, enum awdl_chan_encoding enc, uint8_t prefer);
+
+/**
+ * @brief The peer's sequence with up to {@code max_fill} empty slots filled in.
+ *
+ * Fills with the peer's dominant channel, copying the peer's own encoded bytes
+ * rather than constructing them, and never touches slot 0. dst and src may not
+ * overlap. Returns the number of slots actually filled.
+ */
+int awdl_chanseq_widen(struct awdl_chan *dst, const struct awdl_chan *src,
+                       enum awdl_chan_encoding enc, int max_fill);
 
 /** @brief How many of the 16 slots name {@code chan}. */
 int awdl_chanseq_count_chan(const struct awdl_chan *seq, enum awdl_chan_encoding enc, uint8_t chan);

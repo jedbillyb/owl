@@ -466,6 +466,19 @@ static void awdl_adopt_chanseq(struct daemon_state *state) {
 			enc = src->sequence_enc;
 			break;
 		}
+		case AWDL_CHANSEQ_WIDEN: {
+			/* The peer's own sequence, widened into some of its empty slots.
+			 * §25 found the phone answers a sequence copied from it and ignores
+			 * one pinned to a single channel; this is the ladder between those,
+			 * so the width at which it stops answering is a measurement rather
+			 * than a guess. */
+			int filled = awdl_chanseq_widen(seq, src->sequence, src->sequence_enc,
+			                                awdl->channel.widen_max);
+			enc = src->sequence_enc;
+			if (filled)
+				log_debug("widened %s's sequence by %d slot(s)", ether_ntoa(&src->addr), filled);
+			break;
+		}
 		case AWDL_CHANSEQ_VERBATIM:
 		default:
 			memcpy(seq, src->sequence, sizeof(seq));

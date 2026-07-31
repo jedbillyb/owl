@@ -92,6 +92,7 @@ int main(int argc, char *argv[]) {
 	int filter_rssi = 1;
 	int no_monitor_mode = 0;
 	enum awdl_chanseq_strategy strategy = AWDL_CHANSEQ_VERBATIM;
+	int widen_max = 4;
 
 	char wlan[PATH_MAX] = "";
 	char host[IFNAMSIZ] = DEFAULT_AWDL_DEVICE;
@@ -100,7 +101,7 @@ int main(int argc, char *argv[]) {
 
 	struct daemon_state state;
 
-	while ((c = getopt(argc, argv, "Dc:dvi:h:a:t:fNS:")) != -1) {
+	while ((c = getopt(argc, argv, "Dc:dvi:h:a:t:fNS:W:")) != -1) {
 		switch (c) {
 			case 'S':
 				/* How to derive our channel sequence from a peer's. Exposed so a
@@ -112,9 +113,19 @@ int main(int argc, char *argv[]) {
 					strategy = AWDL_CHANSEQ_ROTATE;
 				else if (!strcmp(optarg, "verbatim"))
 					strategy = AWDL_CHANSEQ_VERBATIM;
+				else if (!strcmp(optarg, "widen"))
+					strategy = AWDL_CHANSEQ_WIDEN;
 				else {
 					log_error("Unknown channel sequence strategy '%s' "
-					          "(use pin, rotate, or verbatim)", optarg);
+					          "(use verbatim, widen, rotate, or pin)", optarg);
+					return EXIT_FAILURE;
+				}
+				break;
+			case 'W':
+				/* How many of the peer's empty slots -S widen may fill. */
+				widen_max = atoi(optarg);
+				if (widen_max < 0 || widen_max > AWDL_CHANSEQ_LENGTH) {
+					log_error("-W takes 0..%d", AWDL_CHANSEQ_LENGTH);
 					return EXIT_FAILURE;
 				}
 				break;
@@ -215,9 +226,13 @@ int main(int argc, char *argv[]) {
 	}
 	state.awdl_state.filter_rssi = filter_rssi;
 	state.awdl_state.channel.strategy = strategy;
+	state.awdl_state.channel.widen_max = widen_max;
 	log_info("channel sequence strategy: %s",
 	         strategy == AWDL_CHANSEQ_PIN ? "pin" :
-	         strategy == AWDL_CHANSEQ_ROTATE ? "rotate" : "verbatim");
+	         strategy == AWDL_CHANSEQ_ROTATE ? "rotate" :
+	         strategy == AWDL_CHANSEQ_WIDEN ? "widen" : "verbatim");
+	if (strategy == AWDL_CHANSEQ_WIDEN)
+		log_info("widening by at most %d slot(s)", widen_max);
 
 	if (state.io.wlan_ifindex)
 		log_info("WLAN device: %s (addr %s)", state.io.wlan_ifname, ether_ntoa(&state.io.if_ether_addr));
