@@ -335,82 +335,22 @@ static void awdl_neighbor_remove(struct awdl_peer *p, void *_io_state) {
 }
 
 /*
- * How recently a peer must have sent us a data frame to count as "active" for
- * the purpose of channel-sequence adoption. Generous on purpose: a transfer
- * that stalls for a slot or two must not cause us to flap back to the elected
- * master's sequence and lose the overlap that was carrying the transfer.
- */
-#define AWDL_DATA_PEER_TIMEOUT_US (5 * 1000000ULL)
-
-/*
- * Pick the peer whose channel sequence we should follow.
- *
- * Upstream always followed the election winner (the sync master). That is
- * correct for staying in sync, but it is the wrong sequence to be on when the
- * device we are actually exchanging data with is someone else -- which is the
- * common case, because any room with several Apple devices in it elects a
- * master that has nothing to do with our transfer. Measured on a real AirDrop
- * receive: the elected master was a bystander for the first 70 seconds, and the
- * transfer only got going once the election happened to swing to the phone.
- *
- * So: prefer the peer that has most recently sent us *data*, and fall back to
- * the elected master when no transfer is in flight. Sync accuracy is unaffected
- * -- awdl_sync_* still tracks the elected master; this only decides which
- * availability windows we try to be present for.
- */
-static struct awdl_peer *awdl_chanseq_source(struct awdl_state *awdl, uint64_t now, int *from_data) {
-	struct awdl_peer *peer, *best = NULL, *master;
-	awdl_peers_it_t it;
-
-	*from_data = 0;
-
-	it = awdl_peers_it_new(awdl->peers.peers);
-	while (awdl_peers_it_next(it, &peer) == PEERS_OK) {
-		if (!peer->has_sequence || !peer->last_data_rx)
-			continue;
-		if (now - peer->last_data_rx > AWDL_DATA_PEER_TIMEOUT_US)
-			continue;
-		if (!best || peer->last_data_rx > best->last_data_rx)
-			best = peer;
-	}
-	awdl_peers_it_free(it);
-
-	if (best) {
-		*from_data = 1;
-		return best;
-	}
-
-	/* No active transfer: fall back to the elected sync master. */
-	if (awdl_peer_get(awdl->peers.peers, &awdl->election.sync_addr, &master) < 0)
-		return NULL;
-	return master->has_sequence ? master : NULL;
-}
-
-/*
- * Adopt a peer's channel sequence so that we are on-channel during its
- * availability windows. Reverts to our own static sequence when we are our own
- * sync master and nobody is sending us data.
+ * Adopt the channel sequence of whichever peer won the election as our sync
+ * master, so that we are on-channel during its availability windows. Reverts
+ * to our own static sequence when we are our own sync master again (e.g. the
+ * master aged out of the peer table).
  *
  * The peer's sequence is stored as raw TLV bytes, so its encoding must be
  * adopted along with it -- decoding those bytes with a different encoding
  * yields plausible-looking but wrong channel numbers.
  */
-static void awdl_adopt_chanseq(struct daemon_state *state) {
+static void awdl_adopt_sync_master_chanseq(struct daemon_state *state) {
 	struct awdl_state *awdl = &state->awdl_state;
-	struct awdl_peer *src;
-	uint64_t now = clock_time_us();
-	int from_data;
+	struct awdl_peer *master;
 
-	src = awdl_chanseq_source(awdl, now, &from_data);
-
-	/* Only revert to the static sequence when there is also no data peer --
-	 * being our own sync master says nothing about whether a transfer is in
-	 * flight, and dropping the peer's sequence mid-transfer is exactly the
-	 * stall we are trying to avoid. */
-	if (!src) {
-		if (awdl_election_is_sync_master(&awdl->election, &awdl->self_address) &&
-		    awdl->channel.sequence_from_peer) {
-			log_info("no sync master or data peer, reverting to static channel sequence");
+	if (awdl_election_is_sync_master(&awdl->election, &awdl->self_address)) {
+		if (awdl->channel.sequence_from_peer) {
+			log_info("no sync master, reverting to static channel sequence");
 			awdl_chanseq_init_static(awdl->channel.sequence, &awdl->channel.master);
 			awdl->channel.enc = AWDL_CHAN_ENC_OPCLASS;
 			awdl->channel.sequence_from_peer = 0;
@@ -418,14 +358,19 @@ static void awdl_adopt_chanseq(struct daemon_state *state) {
 		return;
 	}
 
-	if (awdl->channel.enc != src->sequence_enc ||
-	    memcmp(awdl->channel.sequence, src->sequence, sizeof(src->sequence))) {
-		awdl->channel.enc = src->sequence_enc;
-		memcpy(awdl->channel.sequence, src->sequence, sizeof(src->sequence));
+	if (awdl_peer_get(awdl->peers.peers, &awdl->election.sync_addr, &master) < 0)
+		return; /* elected master is not in the peer table */
+
+	if (!master->has_sequence)
+		return; /* no chanseq TLV seen from it yet; keep what we have */
+
+	if (awdl->channel.enc != master->sequence_enc ||
+	    memcmp(awdl->channel.sequence, master->sequence, sizeof(master->sequence))) {
+		awdl->channel.enc = master->sequence_enc;
+		memcpy(awdl->channel.sequence, master->sequence, sizeof(master->sequence));
 		awdl->channel.sequence_from_peer = 1;
-		log_info("following channel sequence of %s %s (%s), enc %d",
-		         from_data ? "data peer" : "sync master",
-		         ether_ntoa(&src->addr), src->name, src->sequence_enc);
+		log_info("following channel sequence of sync master %s (%s), enc %d",
+		         ether_ntoa(&master->addr), master->name, master->sequence_enc);
 	}
 }
 
@@ -444,7 +389,7 @@ void awdl_clean_peers(struct ev_loop *loop, ev_timer *timer, int revents) {
 	/* TODO for now run election immediately after clean up; might consider seperate timer for this */
 	awdl_election_run(&state->awdl_state.election, &state->awdl_state.peers);
 
-	awdl_adopt_chanseq(state);
+	awdl_adopt_sync_master_chanseq(state);
 
 	ev_timer_again(loop, timer);
 }

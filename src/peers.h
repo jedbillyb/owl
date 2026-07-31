@@ -45,11 +45,6 @@ struct awdl_peer {
 	 * them with the local channel.enc silently yields wrong channels. */
 	enum awdl_chan_encoding sequence_enc;
 	uint64_t sync_offset;
-	/* Time of the last AWDL *data* frame from this peer (0 = never). Sync and
-	 * election frames do not count: every peer in earshot sends those, but only
-	 * the one we are actually exchanging traffic with sends data. Used to pick
-	 * whose channel sequence to follow -- see awdl_adopt_chanseq() in core.c. */
-	uint64_t last_data_rx;
 	char name[HOST_NAME_LENGTH_MAX + 1]; /* space for trailing zero */
 	char country_code[2 + 1];
 	struct ether_addr infra_addr;
