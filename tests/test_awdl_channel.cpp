@@ -122,17 +122,36 @@ TEST(awdl_channel, dominant_chan_picks_the_social_channel) {
 	EXPECT_EQ(awdl_chanseq_dominant_chan(seq, AWDL_CHAN_ENC_OPCLASS, 0), 149);
 }
 
-TEST(awdl_channel, dominant_chan_never_leaves_the_operators_channel) {
-	/* If the operator said -c 149 and the peer is on 149 at all, stay there --
-	 * even when some other channel occupies more slots. Moving off the channel
-	 * the monitor vif was tuned to is not ours to decide. */
+TEST(awdl_channel, dominant_chan_maximises_overlap_not_familiarity) {
+	/* The operator's channel breaks exact ties only. It must NOT win merely by
+	 * being present, or we pin to the peer's worst channel over its best.
+	 *
+	 * The sequence below is real, captured 2026-07-31 from an iPhone while
+	 * airdrop.sh had swept to channel 6: ch36 in 6 slots, ch149 in 2, ch6 in 1.
+	 * The earlier "prefer wins if present" rule returned 6. */
 	struct awdl_chan seq[AWDL_CHANSEQ_LENGTH];
-	static const uint8_t mostly_six[AWDL_CHANSEQ_LENGTH] = {
-		6, 6, 149, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6};
+	static const uint8_t real[AWDL_CHANSEQ_LENGTH] = {
+		36, 36, 149, 0, 0, 0, 0, 36, 6, 36, 149, 36, 0, 0, 0, 36};
 
-	mkseq(seq, mostly_six);
-	EXPECT_EQ(awdl_chanseq_dominant_chan(seq, AWDL_CHAN_ENC_OPCLASS, 0), 6);
+	mkseq(seq, real);
+	EXPECT_EQ(awdl_chanseq_count_chan(seq, AWDL_CHAN_ENC_OPCLASS, 36), 6);
+	EXPECT_EQ(awdl_chanseq_count_chan(seq, AWDL_CHAN_ENC_OPCLASS, 6), 1);
+
+	EXPECT_EQ(awdl_chanseq_dominant_chan(seq, AWDL_CHAN_ENC_OPCLASS, 0), 36);
+	EXPECT_EQ(awdl_chanseq_dominant_chan(seq, AWDL_CHAN_ENC_OPCLASS, 6), 36);
+	EXPECT_EQ(awdl_chanseq_dominant_chan(seq, AWDL_CHAN_ENC_OPCLASS, 149), 36);
+}
+
+TEST(awdl_channel, dominant_chan_breaks_exact_ties_towards_the_operator) {
+	struct awdl_chan seq[AWDL_CHANSEQ_LENGTH];
+	static const uint8_t tied[AWDL_CHANSEQ_LENGTH] = {
+		6, 6, 6, 6, 0, 0, 0, 0, 149, 149, 149, 149, 0, 0, 0, 0};
+
+	mkseq(seq, tied);
 	EXPECT_EQ(awdl_chanseq_dominant_chan(seq, AWDL_CHAN_ENC_OPCLASS, 149), 149);
+	EXPECT_EQ(awdl_chanseq_dominant_chan(seq, AWDL_CHAN_ENC_OPCLASS, 6), 6);
+	/* No preference: deterministic, not dependent on iteration order. */
+	EXPECT_EQ(awdl_chanseq_dominant_chan(seq, AWDL_CHAN_ENC_OPCLASS, 0), 6);
 }
 
 TEST(awdl_channel, dominant_chan_of_empty_sequence_is_zero) {

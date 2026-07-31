@@ -70,12 +70,22 @@ uint8_t awdl_chanseq_dominant_chan(const struct awdl_chan *seq, enum awdl_chan_e
 		if (c)
 			count[c]++;
 	}
-	if (prefer && count[prefer])
-		return prefer; /* already sharing the operator's channel: never move */
 	for (int i = 1; i < 256; i++) {
 		if (count[i] > count[best])
 			best = (uint8_t) i;
 	}
+	/* The operator's channel breaks EXACT ties only. An earlier version returned
+	 * it whenever it appeared at all, which is badly wrong: measured against a
+	 * live iPhone advertising
+	 *   36,36,149,0,0,0,0,36,6,36,149,36,0,0,0,36
+	 * while airdrop.sh had swept to channel 6, that rule pinned us to channel 6
+	 * for 1 slot of 16 instead of channel 36 for 6 of 16 -- the peer's worst
+	 * channel over its best. The point of pinning is to maximise overlap, so
+	 * overlap has to win. */
+	if (!count[best])
+		return 0; /* sequence names no channel at all; do not invent one */
+	if (prefer && count[prefer] == count[best])
+		return prefer;
 	return best;
 }
 
