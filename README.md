@@ -13,12 +13,18 @@
 >   nothing while runtime power management is on, and an in-place interface type
 >   switch never retunes the radio. Both cost a day to find; neither reports an
 >   error.
-> - **Channel sequence follows the data peer, not the election winner.** Upstream
->   adopts the sync master's sequence, which in a room with several Apple devices
->   is usually a bystander - so you are off-channel for most of your transfer
->   peer's availability windows. This tracks which peer is actually sending you
->   data and follows that one instead.
+> - **Selectable channel-sequence strategy (`-S verbatim|widen|rotate|pin`).**
+>   Upstream always adopts the sync master's sequence, which in a room with several
+>   Apple devices is usually a bystander, so you are off-channel for most of your
+>   transfer peer's availability windows. `verbatim` (the default) advertises the
+>   peer's own sequence instead; `widen` fills its empty slots to raise the duty
+>   cycle. An earlier attempt to sit on the peer's channel in all 16 slots (`pin`)
+>   turned out to **break TX to iOS 26** and is kept only as a documented negative
+>   result - measured, not assumed.
 > - `-N` handling on a pre-made monitor vif.
+> - `sync_offset` is actually populated from the sync-params TLV (it was declared
+>   and read everywhere but never assigned upstream), plus an async non-blocking
+>   `set_channel`.
 >
 > ### Note on the requirement below
 >
