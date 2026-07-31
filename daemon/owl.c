@@ -92,6 +92,7 @@ int main(int argc, char *argv[]) {
 	int filter_rssi = 1;
 	int no_monitor_mode = 0;
 	enum awdl_chanseq_strategy strategy = AWDL_CHANSEQ_PIN;
+	long retune_ms = 0;
 
 	char wlan[PATH_MAX] = "";
 	char host[IFNAMSIZ] = DEFAULT_AWDL_DEVICE;
@@ -100,8 +101,20 @@ int main(int argc, char *argv[]) {
 
 	struct daemon_state state;
 
-	while ((c = getopt(argc, argv, "Dc:dvi:h:a:t:fNS:")) != -1) {
+	while ((c = getopt(argc, argv, "Dc:dvi:h:a:t:fNS:K:")) != -1) {
 		switch (c) {
+			case 'K':
+				/* Re-issue set_channel() every K milliseconds even when the slot
+				 * has not changed. A diagnostic arm for §24, not a feature: PIN
+				 * both stopped the radio being retuned and changed what we
+				 * advertise, and only one of those needs to be the reason
+				 * unicast TX died. See channel.h. */
+				retune_ms = strtol(optarg, NULL, 10);
+				if (retune_ms < 0) {
+					log_error("-K takes a non-negative number of milliseconds");
+					return EXIT_FAILURE;
+				}
+				break;
 			case 'S':
 				/* How to derive our channel sequence from a peer's. Exposed so a
 				 * single test session can A/B all three against the same phone --
@@ -218,6 +231,9 @@ int main(int argc, char *argv[]) {
 	log_info("channel sequence strategy: %s",
 	         strategy == AWDL_CHANSEQ_PIN ? "pin" :
 	         strategy == AWDL_CHANSEQ_ROTATE ? "rotate" : "verbatim");
+	state.awdl_state.channel.retune_us = (uint64_t) retune_ms * 1000;
+	if (retune_ms)
+		log_info("channel keepalive: re-tuning every %ld ms", retune_ms);
 
 	if (state.io.wlan_ifindex)
 		log_info("WLAN device: %s (addr %s)", state.io.wlan_ifname, ether_ntoa(&state.io.if_ether_addr));

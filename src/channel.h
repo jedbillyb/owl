@@ -108,6 +108,14 @@ struct awdl_channel_state {
 	int rot_delta;         /* currently applied */
 	int rot_delta_pending; /* seen once, not yet confirmed */
 	uint8_t rot_valid;
+	/* Re-issue set_channel() this often even when the slot has not changed, 0 to
+	 * never. This exists to separate two explanations of the §24 TX failure that
+	 * the bisect data cannot tell apart, because PIN removed channel switching
+	 * and changed the advertised sequence in the same commit. It is a control
+	 * arm, not a fix: only a run against a phone can say whether the driver
+	 * needs the poke. See docs/FINDINGS.md §24 in the airdrop-mt7921 repo. */
+	uint64_t retune_us;
+	uint64_t last_retune;
 };
 
 void awdl_chanseq_init(struct awdl_chan *seq);

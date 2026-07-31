@@ -65,6 +65,8 @@ void awdl_init_state(struct awdl_state *state, const char *hostname, const struc
 	state->channel.rot_delta = 0;
 	state->channel.rot_delta_pending = 0;
 	state->channel.rot_valid = 0;
+	state->channel.retune_us = 0;
+	state->channel.last_retune = 0;
 
 	awdl_election_state_init(&state->election, self);
 
