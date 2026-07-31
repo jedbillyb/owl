@@ -516,6 +516,30 @@ void awdl_print_stats(struct ev_loop *loop, ev_signal *handle, int revents) {
 	         stats->rx_action, stats->rx_data, stats->rx_unknown);
 }
 
+/*
+ * The same counters on a timer, so every run records them without anyone having
+ * to remember to send SIGUSR1 -- which nothing does, since the harnesses stop
+ * OWL with SIGTERM.
+ *
+ * These split the two failure modes that look identical from outside. If a
+ * transfer stalls and tx_data_unicast is NOT advancing, the scheduler is
+ * refusing to transmit (awdl_can_send_unicast_in never returns 0, i.e. we
+ * believe we are never on-channel with the peer). If it IS advancing while the
+ * peer plainly hears nothing, the frames are leaving OWL and dying in the
+ * radio. Two completely different investigations, and they were indistinguishable
+ * from the capture alone during the TX regression of §23.
+ */
+void awdl_stats_tick(struct ev_loop *loop, ev_timer *timer, int revents) {
+	(void) loop;
+	(void) revents;
+	struct awdl_stats *stats = &((struct daemon_state *) timer->data)->awdl_state.stats;
+
+	log_info("STATS tx_action %llu tx_data %llu tx_unicast %llu tx_multicast %llu | "
+	         "rx_action %llu rx_data %llu rx_unknown %llu",
+	         stats->tx_action, stats->tx_data, stats->tx_data_unicast, stats->tx_data_multicast,
+	         stats->rx_action, stats->rx_data, stats->rx_unknown);
+}
+
 int awdl_init(struct daemon_state *state, const char *wlan, const char *host, struct awdl_chan chan, const char *dump) {
 	int err;
 	char hostname[HOST_NAME_LENGTH_MAX + 1];
@@ -575,6 +599,12 @@ void awdl_schedule(struct ev_loop *loop, struct daemon_state *state) {
 	state->ev_state.read_host.data = (void *) state;
 	ev_io_init(&state->ev_state.read_host, host_device_ready, state->io.host_fd, EV_READ);
 	ev_io_start(loop, &state->ev_state.read_host);
+
+	/* Periodic counters, so a stalled transfer can be attributed without a
+	 * second run. See awdl_stats_tick(). */
+	state->ev_state.stats_timer.data = (void *) state;
+	ev_timer_init(&state->ev_state.stats_timer, awdl_stats_tick, 10.0, 10.0);
+	ev_timer_start(loop, &state->ev_state.stats_timer);
 
 	/* Collect replies to the channel switches we no longer wait for. Without
 	 * this they would pile up in the socket receive buffer until it overflowed. */

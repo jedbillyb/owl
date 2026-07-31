@@ -29,7 +29,7 @@
 
 struct ev_state {
 	struct ev_loop *loop;
-	ev_timer mif_timer, psf_timer, tx_timer, tx_mcast_timer, chan_timer, peer_timer;
+	ev_timer mif_timer, psf_timer, tx_timer, tx_mcast_timer, chan_timer, peer_timer, stats_timer;
 	ev_io read_wlan, read_host, read_chan_nl;
 	ev_signal stats;
 };
@@ -76,5 +76,7 @@ void awdl_switch_channel(struct ev_loop *loop, ev_timer *handle, int revents);
 void awdl_clean_peers(struct ev_loop *loop, ev_timer *timer, int revents);
 
 void awdl_print_stats(struct ev_loop *loop, ev_signal *handle, int revents);
+
+void awdl_stats_tick(struct ev_loop *loop, ev_timer *timer, int revents);
 
 #endif /* OWL_CORE_H */
