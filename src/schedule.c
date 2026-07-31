@@ -32,7 +32,26 @@ bool awdl_same_channel_as_peer(const struct awdl_state *state, uint64_t now, con
 	int own_chan, peer_chan;
 
 	own_slot = awdl_sync_current_eaw(now, &state->sync) % AWDL_CHANSEQ_LENGTH;
-	peer_slot = awdl_sync_current_eaw(awdl_peer_time(now, peer), &state->sync) % AWDL_CHANSEQ_LENGTH;
+
+	/* Deliberately does NOT apply peer->sync_offset unless the ROTATE strategy
+	 * asked for it.
+	 *
+	 * This function gates every unicast transmission (awdl_can_send_unicast_in
+	 * -> awdl_send_unicast): if it says we are never on-channel with the peer,
+	 * OWL silently stops transmitting while continuing to receive perfectly.
+	 * Upstream read sync_offset here but never assigned it, so it was 0 for
+	 * every peer and this was effectively `own_slot == peer_slot`. Populating
+	 * it therefore changed behaviour that had been load-bearing-by-accident for
+	 * years, and the TX path is not the place to find out whether the new value
+	 * is right.
+	 *
+	 * It is also not obviously right in general: awdl_sync_error_tu() compares
+	 * the peer's free-running aw_counter against ours, which is only meaningful
+	 * for the peer our clock actually tracks -- the elected master. For anyone
+	 * else the difference is arbitrary. */
+	peer_slot = (state->channel.strategy == AWDL_CHANSEQ_ROTATE)
+	            ? awdl_sync_current_eaw(awdl_peer_time(now, peer), &state->sync) % AWDL_CHANSEQ_LENGTH
+	            : own_slot;
 
 	own_chan = awdl_chan_num(state->channel.sequence[own_slot], state->channel.enc);
 	peer_chan = awdl_chan_num(peer->sequence[peer_slot], state->channel.enc);
