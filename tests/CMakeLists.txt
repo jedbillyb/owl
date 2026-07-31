@@ -11,6 +11,7 @@ target_sources(tests PRIVATE
         test_awdl_peers.cpp
         test_awdl_election.cpp
         test_awdl_channel.cpp
+        test_awdl_txgate.cpp
 )
 
 target_include_directories(tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

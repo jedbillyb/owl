@@ -54,7 +54,18 @@ bool awdl_same_channel_as_peer(const struct awdl_state *state, uint64_t now, con
 	            : own_slot;
 
 	own_chan = awdl_chan_num(state->channel.sequence[own_slot], state->channel.enc);
-	peer_chan = awdl_chan_num(peer->sequence[peer_slot], state->channel.enc);
+	/* The peer's sequence must be decoded with the encoding it ARRIVED in, not
+	 * with ours. They are different fields for a reason: the raw TLV bytes are
+	 * stored verbatim, and {chan_num, opclass} read as {flags, chan_num} yields
+	 * plausible-looking nonsense.
+	 *
+	 * Upstream used state->channel.enc here and got away with it, because
+	 * adopting a peer's sequence also adopted its encoding, so the two always
+	 * agreed. Anything that sets our encoding independently -- such as pinning a
+	 * channel -- breaks that coupling, and then this comparison never matches,
+	 * the unicast gate never opens, and OWL receives perfectly while
+	 * transmitting nothing at all. */
+	peer_chan = awdl_chan_num(peer->sequence[peer_slot], peer->sequence_enc);
 
 	return own_chan && (own_chan == peer_chan);
 }
