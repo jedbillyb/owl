@@ -479,6 +479,36 @@ static void awdl_adopt_chanseq(struct daemon_state *state) {
 				log_debug("widened %s's sequence by %d slot(s)", ether_ntoa(&src->addr), filled);
 			break;
 		}
+		case AWDL_CHANSEQ_INTERSECT: {
+			/* Advertise only the slots we can actually serve. Our channel is the
+			 * static one from -c, which is what the P2P-GO chanctx holds the radio
+			 * on; awdl_switch_channel() cannot move off it, so every other slot in
+			 * the peer's sequence is a slot we would be claiming and then missing. */
+			uint8_t ours = awdl_chan_num(awdl->channel.master, AWDL_CHAN_ENC_OPCLASS);
+			int kept = awdl_chanseq_intersect(seq, src->sequence, src->sequence_enc, ours);
+
+			if (!kept) {
+				/* No overlap at all this tick. Keep whatever we last advertised
+				 * rather than announcing an all-empty sequence, which says "never
+				 * available" and would have the phone stop addressing us entirely.
+				 *
+				 * This is the silent-failure case: everything downstream looks
+				 * healthy (owl up, awdl0 up, opendrop listening, mDNS leaving the
+				 * radio) while not one slot can carry a frame to this peer. It is
+				 * what "it just stopped appearing" looked like from outside, so it
+				 * is logged at INFO with the channel we WOULD need, loudly enough
+				 * for airdropd to notice and act on it. */
+				uint8_t want = awdl_chanseq_dominant_chan(src->sequence, src->sequence_enc, 0);
+
+				log_info("NO OVERLAP with %s on ch %d - peer wants ch %d",
+				         ether_ntoa(&src->addr), ours, want);
+				return;
+			}
+			log_debug("intersect: %d/%d slots overlap %s on ch %d",
+			          kept, AWDL_CHANSEQ_LENGTH, ether_ntoa(&src->addr), ours);
+			enc = src->sequence_enc;
+			break;
+		}
 		case AWDL_CHANSEQ_VERBATIM:
 		default:
 			memcpy(seq, src->sequence, sizeof(seq));

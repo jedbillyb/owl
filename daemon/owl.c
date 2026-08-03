@@ -115,9 +115,11 @@ int main(int argc, char *argv[]) {
 					strategy = AWDL_CHANSEQ_VERBATIM;
 				else if (!strcmp(optarg, "widen"))
 					strategy = AWDL_CHANSEQ_WIDEN;
+				else if (!strcmp(optarg, "intersect"))
+					strategy = AWDL_CHANSEQ_INTERSECT;
 				else {
 					log_error("Unknown channel sequence strategy '%s' "
-					          "(use verbatim, widen, rotate, or pin)", optarg);
+					          "(use verbatim, widen, intersect, rotate, or pin)", optarg);
 					return EXIT_FAILURE;
 				}
 				break;
@@ -230,7 +232,8 @@ int main(int argc, char *argv[]) {
 	log_info("channel sequence strategy: %s",
 	         strategy == AWDL_CHANSEQ_PIN ? "pin" :
 	         strategy == AWDL_CHANSEQ_ROTATE ? "rotate" :
-	         strategy == AWDL_CHANSEQ_WIDEN ? "widen" : "verbatim");
+	         strategy == AWDL_CHANSEQ_WIDEN ? "widen" :
+	         strategy == AWDL_CHANSEQ_INTERSECT ? "intersect" : "verbatim");
 	if (strategy == AWDL_CHANSEQ_WIDEN)
 		log_info("widening by at most %d slot(s)", widen_max);
 

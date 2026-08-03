@@ -96,6 +96,43 @@ int awdl_chanseq_widen(struct awdl_chan *dst, const struct awdl_chan *src,
 	return filled;
 }
 
+int awdl_chanseq_intersect(struct awdl_chan *dst, const struct awdl_chan *src,
+                           enum awdl_chan_encoding enc, uint8_t keep) {
+	int kept = 0;
+
+	/* The peer's sequence with every slot we cannot physically serve blanked
+	 * out.
+	 *
+	 * This exists for the P2P-GO configuration, where the radio is held on one
+	 * channel by go0's chanctx and awdl_switch_channel()'s set_channel() is a
+	 * silent no-op -- measured: 2425 of 2425 captured frames on 5180 MHz across
+	 * a window in which OWL logged ten switches to 149 and ten back. So we are
+	 * on exactly one channel no matter what our sequence claims, while an
+	 * iPhone ranges over 36/149/6 plus empty slots.
+	 *
+	 * That leaves only bad options if we advertise something untrue. VERBATIM
+	 * claims we follow the peer everywhere, so the phone sends to us on 149 and
+	 * we are deaf for those slots. PIN claims one channel in all 16, which §25
+	 * measured the phone rejecting outright. The intersection is the honest
+	 * sequence: the slots we really are on the peer's channel, and empty
+	 * elsewhere. Empty slots are ordinary in every captured Apple sequence, so
+	 * this keeps the structure §25 found to matter while telling no lie about
+	 * our availability.
+	 *
+	 * Bytes are copied from the peer's own sequence, never constructed, for the
+	 * same reason awdl_chanseq_widen() does it: fewer invented bytes, fewer ways
+	 * a negative result means something other than what we set out to test. */
+	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++) {
+		if (keep && awdl_chan_num(src[i], enc) == keep) {
+			dst[i] = src[i];
+			kept++;
+		} else {
+			dst[i] = (struct awdl_chan) CHAN_NULL;
+		}
+	}
+	return kept;
+}
+
 uint8_t awdl_chanseq_dominant_chan(const struct awdl_chan *seq, enum awdl_chan_encoding enc, uint8_t prefer) {
 	int count[256] = {0};
 	uint8_t best = 0;

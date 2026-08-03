@@ -106,6 +106,10 @@ enum awdl_chanseq_strategy {
 	 * back (§21). Nothing is invented: the fill value is copied from the peer's
 	 * own bytes. */
 	AWDL_CHANSEQ_WIDEN = 3,
+	/* The peer's sequence with every slot blanked whose channel we cannot
+	 * actually be on. For P2P-GO, where the radio is pinned by go0's chanctx and
+	 * OWL's channel switching does nothing. See awdl_chanseq_intersect(). */
+	AWDL_CHANSEQ_INTERSECT = 4,
 };
 
 struct awdl_channel_state {
@@ -166,6 +170,17 @@ uint8_t awdl_chanseq_dominant_chan(const struct awdl_chan *seq, enum awdl_chan_e
  */
 int awdl_chanseq_widen(struct awdl_chan *dst, const struct awdl_chan *src,
                        enum awdl_chan_encoding enc, int max_fill);
+
+/**
+ * @brief The peer's sequence with every slot blanked whose channel is not {@code keep}.
+ *
+ * For a radio that cannot actually hop (P2P-GO holds it on one channel), this is
+ * the only sequence that is both structurally Apple-like and true. Copies the
+ * peer's own encoded bytes. dst and src may not overlap. Returns the number of
+ * slots kept - our real overlap with the peer, out of AWDL_CHANSEQ_LENGTH.
+ */
+int awdl_chanseq_intersect(struct awdl_chan *dst, const struct awdl_chan *src,
+                           enum awdl_chan_encoding enc, uint8_t keep);
 
 /** @brief How many of the 16 slots name {@code chan}. */
 int awdl_chanseq_count_chan(const struct awdl_chan *seq, enum awdl_chan_encoding enc, uint8_t chan);

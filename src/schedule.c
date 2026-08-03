@@ -19,6 +19,8 @@
 
 #include "schedule.h"
 
+#include "log.h"
+
 double usec_to_sec(uint64_t usec) {
 	return usec / 1000000.;
 }
@@ -66,6 +68,24 @@ bool awdl_same_channel_as_peer(const struct awdl_state *state, uint64_t now, con
 	 * the unicast gate never opens, and OWL receives perfectly while
 	 * transmitting nothing at all. */
 	peer_chan = awdl_chan_num(peer->sequence[peer_slot], peer->sequence_enc);
+
+	/* Instrumentation for the "receives fine, transmits nothing" failure.
+	 * This gate is the only thing standing between a queued unicast frame and
+	 * the air, and when it is stuck shut the symptom is indistinguishable from
+	 * a radio problem: mDNS multicast flows, the peer's frames arrive, and our
+	 * TCP replies simply never appear. Log what it actually compared, rate
+	 * limited to once a second so -vv stays readable. */
+	{
+		static uint64_t last_log_us = 0;
+		if (now - last_log_us > 1000000) {
+			last_log_us = now;
+			log_debug("GATE slot %d own_chan %d (enc %d) peer_chan %d (enc %d) seq[%d]=%04x -> %s",
+			          own_slot, own_chan, state->channel.enc, peer_chan, peer->sequence_enc,
+			          peer_slot, (unsigned) ((peer->sequence[peer_slot].val[1] << 8)
+			                                 | peer->sequence[peer_slot].val[0]),
+			          (own_chan && (own_chan == peer_chan)) ? "OPEN" : "SHUT");
+		}
+	}
 
 	return own_chan && (own_chan == peer_chan);
 }
