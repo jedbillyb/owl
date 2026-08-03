@@ -197,6 +197,12 @@ int main(int argc, char *argv[]) {
 	if (daemon)
 		daemonize();
 
+	/* THE CHANNEL SET, PLACE 3 OF 3, and the one with the final say: a channel
+	 * missing here makes owl exit right after printing its banner, which reads
+	 * downstream as "awdl0 never appeared" rather than as a rejected channel.
+	 * The two callers that gate on this set - airdrop-mt7921's
+	 * daemon/airdrop-helper (`go-up` and `owl-start`) and its daemon/airdropd
+	 * (GO_CHANNELS) - must be kept in step with it. */
 	switch (chan_num) {
 		case 6:
 			chan = CHAN_OPCLASS_6;
