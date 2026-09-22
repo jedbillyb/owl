@@ -474,9 +474,37 @@ static void awdl_adopt_chanseq(struct daemon_state *state) {
 			 * than a guess. */
 			int filled = awdl_chanseq_widen(seq, src->sequence, src->sequence_enc,
 			                                awdl->channel.widen_max);
+			uint8_t ours = awdl_chan_num(awdl->channel.master, AWDL_CHAN_ENC_OPCLASS);
+			int kept = ours ? awdl_chanseq_count_chan(src->sequence, src->sequence_enc, ours) : 0;
+
 			enc = src->sequence_enc;
 			if (filled)
 				log_debug("widened %s's sequence by %d slot(s)", ether_ntoa(&src->addr), filled);
+
+			/* Report the overlap even though we do not act on it here. Widening
+			 * changes what we ADVERTISE; it cannot move the radio, which a
+			 * P2P-GO chanctx holds on one channel. So "can this peer reach us"
+			 * has the same answer under every strategy, and until now it was
+			 * only ever measured under intersect -- which meant that selecting
+			 * widen silently blinded the one line that carries it, and anything
+			 * parsing this log went on reporting a state it was no longer
+			 * measuring.
+			 *
+			 * Control flow differs from intersect: widen has nothing to withhold,
+			 * so with zero overlap it reports and continues rather than bailing.
+			 *
+			 * The debug line retains the literal "intersect:" prefix because it is
+			 * a wire format with a consumer (airdropd greps for it), not a
+			 * description, even though nothing was intersected here. */
+			if (!kept) {
+				uint8_t want = awdl_chanseq_dominant_chan(src->sequence, src->sequence_enc, 0);
+
+				log_info("NO OVERLAP with %s on ch %d - peer wants ch %d",
+				         ether_ntoa(&src->addr), ours, want);
+			} else {
+				log_debug("intersect: %d/%d slots overlap %s on ch %d",
+				          kept, AWDL_CHANSEQ_LENGTH, ether_ntoa(&src->addr), ours);
+			}
 			break;
 		}
 		case AWDL_CHANSEQ_INTERSECT: {
