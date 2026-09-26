@@ -17,14 +17,16 @@
 >   Upstream always adopts the sync master's sequence, which in a room with several
 >   Apple devices is usually a bystander, so you are off-channel for most of your
 >   transfer peer's availability windows. `verbatim` (the default) advertises the
->   peer's own sequence instead; `widen` fills its empty slots to raise the duty
+>   peer's own sequence instead; `widen` fills up to `-W n` of its empty slots (default 4) to raise the duty
 >   cycle. An earlier attempt to sit on the peer's channel in all 16 slots (`pin`)
 >   turned out to **break TX to iOS 26** and is kept only as a documented negative
 >   result - measured, not assumed.
 >   `intersect` blanks every slot whose channel the radio cannot actually be on,
 >   for P2P-GO where the GO's channel context pins the radio, and logs
 >   `NO OVERLAP` when nothing is left. The overlap is reported under `widen` too.
-> - `-N` handling on a pre-made monitor vif.
+> - `-N` handling on a pre-made monitor vif. On the MT7921 `-N` is **required**:
+>   the monitor vif is created before OWL starts, so the upstream warning about
+>   `-N` further down does not apply here.
 > - `sync_offset` is actually populated from the sync-params TLV (it was declared
 >   and read everywhere but never assigned upstream), plus an async non-blocking
 >   `set_channel`.
@@ -143,9 +145,9 @@ We provide a coarse structure of the most important components and files to faci
 
 ## Current Limitations/TODOs
 
-* OWL uses static election metric and counter values, so it either takes part as a slave (low values) or wins the election (high values). See `AWDL_ELECTION_METRIC_INIT` and `AWDL_ELECTION_COUNTER_INIT` and in `include/election.h`.
-* The channel sequence does not adjust itself automatically to current network load and/or other triggers. This would require a better understanding of Apple's implementation. Currently, the channel sequence is fixed when initializing. See `awdl_chanseq_init_static()` in `src/state.{c,h}`.
-* OWL does not allow a concurrent connection to an AP. This means, that when started, the Wi-Fi interface exclusively uses AWDL. To work around this, OWL could create a new monitor interface (instead of making the Wi-Fi interface one) and adjust its channel sequence to include the channel of the AP network.
+* OWL uses static election metric and counter values, so it either takes part as a slave (low values) or wins the election (high values). See `AWDL_ELECTION_METRIC_INIT` and `AWDL_ELECTION_COUNTER_INIT` in `src/election.h`.
+* The channel sequence does not adjust itself automatically to current network load and/or other triggers. This would require a better understanding of Apple's implementation. Upstream fixes the channel sequence when initializing (`awdl_chanseq_init_static()` in `src/channel.{c,h}`); this fork adopts the peer's instead, see `-S` above.
+* OWL does not allow a concurrent connection to an AP. This means, that when started, the Wi-Fi interface exclusively uses AWDL. To work around this, OWL could create a new monitor interface (instead of making the Wi-Fi interface one) and adjust its channel sequence to include the channel of the AP network. (On the MT7921 this is solved outside OWL, with a P2P-GO vif: see [mt7921-dual-channel](https://github.com/jedbillyb/mt7921-dual-channel).)
 
 
 ## Our Papers
