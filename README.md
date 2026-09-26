@@ -13,7 +13,7 @@
 >   nothing while runtime power management is on, and an in-place interface type
 >   switch never retunes the radio. Both cost a day to find; neither reports an
 >   error.
-> - **Selectable channel-sequence strategy (`-S verbatim|widen|rotate|pin`).**
+> - **Selectable channel-sequence strategy (`-S verbatim|widen|intersect|rotate|pin`).**
 >   Upstream always adopts the sync master's sequence, which in a room with several
 >   Apple devices is usually a bystander, so you are off-channel for most of your
 >   transfer peer's availability windows. `verbatim` (the default) advertises the
@@ -21,6 +21,9 @@
 >   cycle. An earlier attempt to sit on the peer's channel in all 16 slots (`pin`)
 >   turned out to **break TX to iOS 26** and is kept only as a documented negative
 >   result - measured, not assumed.
+>   `intersect` blanks every slot whose channel the radio cannot actually be on,
+>   for P2P-GO where the GO's channel context pins the radio, and logs
+>   `NO OVERLAP` when nothing is left. The overlap is reported under `widen` too.
 > - `-N` handling on a pre-made monitor vif.
 > - `sync_offset` is actually populated from the sync-params TLV (it was declared
 >   and read everywhere but never assigned upstream), plus an async non-blocking
