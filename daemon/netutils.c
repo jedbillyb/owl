@@ -68,9 +68,9 @@ struct nl80211_state {
 	/* A second, non-blocking socket used only for NL80211_CMD_SET_CHANNEL.
 	 *
 	 * Channel switching is the one netlink operation that happens continuously
-	 * from inside the event loop, and waiting for its ACK there was measured at
-	 * a mean 8.5 ms over 734 switches -- around 30% of loop time at 3.5
-	 * switches/s, against a 16 TU (16.4 ms) availability window. It gets its own
+	 * from inside the event loop. Each request is processed synchronously in
+	 * sendmsg() (~10 ms on an MT7922), so not reading the ACK does not make the
+	 * switch itself non-blocking; see awdl_switch_channel(). It gets its own
 	 * socket so that draining replies from the loop cannot swallow the ACKs that
 	 * the blocking setup calls on ->socket are waiting for. */
 	struct nl_sock *chan_socket;

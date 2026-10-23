@@ -311,10 +311,14 @@ void awdl_switch_channel(struct ev_loop *loop, ev_timer *timer, int revents) {
 			 * actually follow a peer's sequence it runs on every transition,
 			 * against a 16 TU (16384 us) availability window. It is dropped.
 			 *
-			 * set_channel() no longer waits for the kernel's ACK either; its
-			 * reply is collected by chan_nl_ready(). The wait was measured at a
-			 * mean 8.5 ms over 734 switches, which at 3.5 switches/s is about
-			 * 30% of the event loop spent blocked inside the loop itself. */
+			 * set_channel() no longer reads the kernel's ACK either; its reply
+			 * is collected by chan_nl_ready(). That removed the wait for the
+			 * answer, not for the work: generic netlink runs the request
+			 * (nl80211, mac80211, driver, firmware command) synchronously
+			 * inside sendmsg(), so this call still blocks ~10 ms (median
+			 * 10.6 ms over 1038 switches on an MT7922, #2), about 6% of the
+			 * loop at 5.7 switches/s. The upside: once it returns, the
+			 * switch has been applied. */
 			uint64_t t0 = clock_time_us();
 			err = set_channel(state->io.wlan_ifindex, chan_num_new);
 			log_debug("set_channel(%d) queued in %llu us", chan_num_new,
