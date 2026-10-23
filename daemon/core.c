@@ -116,13 +116,14 @@ void awdl_receive_frame(uint8_t *user, const struct pcap_pkthdr *hdr, const uint
 	const struct buf *frame = buf_new_const(buf, hdr->caplen);
 	struct buf *data_arr[MAX_NUM_AMPDU];
 	struct buf **data = &data_arr[0];
-	result = awdl_rx(frame, &data, &state->awdl_state);
-	if (result == RX_OK) {
-		for (struct buf **data_start = &data_arr[0]; data_start < data; data_start++) {
+	result = awdl_rx(frame, &data, &data_arr[MAX_NUM_AMPDU], &state->awdl_state);
+	/* free every frame produced, also those from an A-MSDU that failed part way */
+	for (struct buf **data_start = &data_arr[0]; data_start < data; data_start++) {
+		if (result == RX_OK)
 			host_send(&state->io, buf_data(*data_start), buf_len(*data_start));
-			buf_free(*data_start);
-		}
-	} else if (result < RX_OK) {
+		buf_free(*data_start);
+	}
+	if (result < RX_OK) {
 		log_warn("unhandled frame (%d)", result);
 		dump_frame(state->dump, hdr, buf);
 		state->awdl_state.stats.rx_unknown++;

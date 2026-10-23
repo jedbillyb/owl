@@ -36,6 +36,7 @@ enum RX_RESULT {
 	RX_UNEXPECTED_TYPE = -2,
 	RX_UNEXPECTED_VALUE = -3,
 	RX_TOO_SHORT = -3,
+	RX_TOO_MANY_FRAMES = -4,
 };
 
 int awdl_handle_sync_params_tlv(struct awdl_peer *src, const struct buf *val, struct awdl_state *state, uint64_t tsft);
@@ -64,19 +65,20 @@ int awdl_rx_action(const struct buf *frame, signed char rssi, uint64_t tsft,
 int llc_parse(const struct buf *frame, struct llc_hdr *llc);
 int awdl_valid_llc_header(const struct buf *frame);
 
-int awdl_rx_data(const struct buf *frame, struct buf ***out,
+int awdl_rx_data(const struct buf *frame, struct buf ***out, struct buf **out_end,
                  const struct ether_addr *src, const struct ether_addr *dst, struct awdl_state *state);
 
-int awdl_rx_data_amsdu(const struct buf *frame, struct buf ***out,
+int awdl_rx_data_amsdu(const struct buf *frame, struct buf ***out, struct buf **out_end,
                        const struct ether_addr *src, const struct ether_addr *dst, struct awdl_state *state);
 
 /** @brief Receive and process AWDL action and data frame
  *
  * @param frame input frame
  * @param data if {@code frame} points to a valid AWDL data frame, will point to converted Ethernet frame after function returns
+ * @param data_frames_end one past the last slot of the array {@code data} points into; no frame is written at or beyond it
  * @param state
  * @return RX_OK
  */
-int awdl_rx(const struct buf *frame, struct buf ***data_frames, struct awdl_state *state);
+int awdl_rx(const struct buf *frame, struct buf ***data_frames, struct buf **data_frames_end, struct awdl_state *state);
 
 #endif /* AWDL_RX_H_ */

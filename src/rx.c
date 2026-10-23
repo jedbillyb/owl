@@ -366,7 +366,7 @@ int awdl_valid_llc_header(const struct buf *frame) {
 	return 1;
 }
 
-int awdl_rx_data(const struct buf *frame, struct buf ***out, const struct ether_addr *src,
+int awdl_rx_data(const struct buf *frame, struct buf ***out, struct buf **out_end, const struct ether_addr *src,
                  const struct ether_addr *dst, struct awdl_state *state) {
 	uint16_t ether_type;
 	int offset = 0;
@@ -390,6 +390,9 @@ int awdl_rx_data(const struct buf *frame, struct buf ***out, const struct ether_
 	read_be16(frame, 6, &ether_type);
 	buf_strip(frame, sizeof(struct awdl_data));
 
+	if (*out >= out_end)
+		return RX_TOO_MANY_FRAMES; /* caller's output array is full */
+
 	**out = buf_new_owned(ETHER_MAX_LEN);
 
 	/* TODO use checked write methods */
@@ -404,7 +407,7 @@ int awdl_rx_data(const struct buf *frame, struct buf ***out, const struct ether_
 	return RX_OK;
 }
 
-int awdl_rx_data_amsdu(const struct buf *frame, struct buf ***out, const struct ether_addr *src __attribute__((unused)),
+int awdl_rx_data_amsdu(const struct buf *frame, struct buf ***out, struct buf **out_end, const struct ether_addr *src __attribute__((unused)),
                        const struct ether_addr *dst __attribute__((unused)), struct awdl_state *state) {
 	/* Iterate over all subframes */
 	while (buf_len(frame) > 0) {
@@ -420,7 +423,7 @@ int awdl_rx_data_amsdu(const struct buf *frame, struct buf ***out, const struct 
 			return RX_TOO_SHORT;
 		/* create subview of buf */
 		subframe = buf_new_const(buf_data(frame), len_a);
-		err = awdl_rx_data(subframe, out, &src_a, &dst_a, state);
+		err = awdl_rx_data(subframe, out, out_end, &src_a, &dst_a, state);
 		buf_free(subframe);
 		if (err < 0)
 			return err;
@@ -479,7 +482,7 @@ wire_error:
 	return -1;
 }
 
-int awdl_rx(const struct buf *frame, struct buf ***data_frame, struct awdl_state *state) {
+int awdl_rx(const struct buf *frame, struct buf ***data_frame, struct buf **data_frame_end, struct awdl_state *state) {
 	const struct ieee80211_hdr *ieee80211;
 	const struct ether_addr *from, *to;
 	uint16_t fc, qosc; /* frame and QoS control */
@@ -519,10 +522,10 @@ int awdl_rx(const struct buf *frame, struct buf ***data_frame, struct awdl_state
 			BUF_STRIP(frame, IEEE80211_QOS_CTL_LEN);
 			/* TODO should handle block acks if required (IEEE80211_QOS_CTL_ACK_POLICY_XYZ) */
 			if (qosc & IEEE80211_QOS_CTL_A_MSDU_PRESENT)
-				return awdl_rx_data_amsdu(frame, data_frame, from, to, state);
+				return awdl_rx_data_amsdu(frame, data_frame, data_frame_end, from, to, state);
 			/* else fall through */
 		case IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA:
-			return awdl_rx_data(frame, data_frame, from, to, state);
+			return awdl_rx_data(frame, data_frame, data_frame_end, from, to, state);
 		default:
 			log_warn("ieee80211: cannot handle type %x and subtype %x of received frame from %s",
 			         fc & IEEE80211_FCTL_FTYPE, fc & IEEE80211_FCTL_STYPE, ether_ntoa(from));
